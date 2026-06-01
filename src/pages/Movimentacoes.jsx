@@ -539,14 +539,31 @@ function Movimentacoes({
                 Tipo
               </label>
 
-              <select
-                value={novaMovimentacao.tipo}
-                onChange={(event) => atualizarCampo('tipo', event.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                <option value="entrada">Entrada</option>
-                <option value="saida">Saída</option>
-              </select>
+              <div className="mt-1 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => atualizarCampo('tipo', 'entrada')}
+                  className={
+                    novaMovimentacao.tipo === 'entrada'
+                      ? 'rounded-xl bg-green-600 px-4 py-3 text-base font-semibold text-white'
+                      : 'rounded-xl border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-700 hover:bg-slate-50'
+                  }
+                >
+                  Entrada
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => atualizarCampo('tipo', 'saida')}
+                  className={
+                    novaMovimentacao.tipo === 'saida'
+                      ? 'rounded-xl bg-red-600 px-4 py-3 text-base font-semibold text-white'
+                      : 'rounded-xl border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-700 hover:bg-slate-50'
+                  }
+                >
+                  Saída
+                </button>
+              </div>
             </div>
 
             <div>
