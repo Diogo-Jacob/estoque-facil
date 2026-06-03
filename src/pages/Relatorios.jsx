@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import jsPDF from 'jspdf'
 import {
   BarChart,
@@ -113,14 +113,19 @@ function Relatorios({ empresaAtiva }) {
   const dadosGraficoMaisVendidos = relatorioPorProduto
     .filter((item) => item.saidas > 0)
     .sort((a, b) => b.saidas - a.saidas)
-    .slice(0, 10)
     .map((item) => ({
+      nomeCompleto: item.produto,
       nome:
         item.produto.length > 18
           ? `${item.produto.slice(0, 18)}...`
           : item.produto,
       saidas: item.saidas,
     }))
+
+  const larguraGraficoVendas = Math.max(
+    900,
+    dadosGraficoMaisVendidos.length * 170
+  )
 
   function gerarTextoPeriodo() {
     const nomeMes = nomesMeses.find(
@@ -157,6 +162,35 @@ function Relatorios({ empresaAtiva }) {
       <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
         Normal
       </span>
+    )
+  }
+
+  function TickProdutoGrafico({ x, y, payload }) {
+    const texto = payload.value || ''
+    const partes = texto.split(' ')
+
+    const primeiraLinha = partes.slice(0, 2).join(' ')
+    const segundaLinha = partes.slice(2).join(' ')
+
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text
+          x={0}
+          y={0}
+          dy={16}
+          textAnchor="middle"
+          fill="#475569"
+          fontSize={11}
+        >
+          <tspan x={0}>{primeiraLinha}</tspan>
+
+          {segundaLinha && (
+            <tspan x={0} dy={14}>
+              {segundaLinha}
+            </tspan>
+          )}
+        </text>
+      </g>
     )
   }
 
@@ -241,16 +275,15 @@ function Relatorios({ empresaAtiva }) {
       pdf.setFontSize(10)
       pdf.text('Nenhuma saída registrada no período selecionado.', margem, y)
     } else {
-      const alturaGrafico = 90
+      const dadosPdf = dadosGraficoMaisVendidos.slice(0, 12)
+      const alturaGrafico = 80
       const larguraGrafico = larguraUtil
       const xGrafico = margem
       const yGrafico = y
 
-      const maiorValor = Math.max(
-        ...dadosGraficoMaisVendidos.map((item) => item.saidas)
-      )
+      const maiorValor = Math.max(...dadosPdf.map((item) => item.saidas))
 
-      const quantidadeBarras = dadosGraficoMaisVendidos.length
+      const quantidadeBarras = dadosPdf.length
       const espacamento = 4
       const larguraBarra =
         (larguraGrafico - espacamento * (quantidadeBarras - 1)) /
@@ -271,7 +304,7 @@ function Relatorios({ empresaAtiva }) {
         yGrafico + alturaGrafico
       )
 
-      dadosGraficoMaisVendidos.forEach((item, index) => {
+      dadosPdf.forEach((item, index) => {
         const alturaBarra = (item.saidas / maiorValor) * (alturaGrafico - 14)
         const x = xGrafico + index * (larguraBarra + espacamento)
         const yBarra = yGrafico + alturaGrafico - alturaBarra
@@ -286,13 +319,38 @@ function Relatorios({ empresaAtiva }) {
 
         pdf.setTextColor(71, 85, 105)
         pdf.setFont('helvetica', 'normal')
-        pdf.setFontSize(8)
+        pdf.setFontSize(7)
 
-        const nomeProduto =
-          item.nome.length > 12 ? `${item.nome.slice(0, 12)}...` : item.nome
+        const nomeQuebrado = pdf.splitTextToSize(
+          item.nomeCompleto,
+          larguraBarra + 6
+        )
 
-        pdf.text(nomeProduto, x, yGrafico + alturaGrafico + 6)
+        const linhasNome = nomeQuebrado.slice(0, 3)
+
+        if (nomeQuebrado.length > 3) {
+          linhasNome[2] = `${linhasNome[2].slice(0, 10)}...`
+        }
+
+        linhasNome.forEach((linha, linhaIndex) => {
+          pdf.text(
+            linha,
+            x + larguraBarra / 2,
+            yGrafico + alturaGrafico + 6 + linhaIndex * 4,
+            {
+              align: 'center',
+            }
+          )
+        })
       })
+
+      if (dadosGraficoMaisVendidos.length > 12) {
+        y += alturaGrafico + 28
+
+        pdf.setTextColor(71, 85, 105)
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(9)
+      }
     }
 
     return pdf
@@ -481,13 +539,19 @@ function Relatorios({ empresaAtiva }) {
             <h3 className="text-xl font-bold text-slate-900">
               Gráfico de Vendas
             </h3>
+
+            {!gerandoPdf && dadosGraficoMaisVendidos.length > 5 && (
+              <p className="mt-1 text-xs text-slate-400">
+                Arraste para o lado para visualizar todos os produtos.
+              </p>
+            )}
           </div>
 
           <div
             className={
               gerandoPdf
                 ? 'mt-6 h-72'
-                : 'mt-6 h-80 overflow-x-auto overflow-y-hidden print:h-72 print:overflow-visible'
+                : 'mt-6 h-96 overflow-x-auto overflow-y-hidden print:h-72 print:overflow-visible'
             }
           >
             {carregandoRelatorio ? (
@@ -496,25 +560,26 @@ function Relatorios({ empresaAtiva }) {
               </div>
             ) : dadosGraficoMaisVendidos.length > 0 ? (
               <div
-                className={
-                  gerandoPdf
-                    ? 'h-full w-full'
-                    : 'h-full min-w-[720px] md:min-w-0 print:min-w-0'
-                }
+                style={{
+                  width: gerandoPdf ? '100%' : `${larguraGraficoVendas}px`,
+                }}
+                className="h-full"
               >
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={dadosGraficoMaisVendidos}
-                    margin={{ top: 10, right: 20, left: 0, bottom: 10 }}
-                    barCategoryGap="22%"
+                    margin={{ top: 20, right: 24, left: 0, bottom: 80 }}
+                    barCategoryGap="24%"
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
 
                     <XAxis
                       dataKey="nome"
-                      tick={{ fill: '#475569', fontSize: 12 }}
+                      interval={0}
+                      tick={<TickProdutoGrafico />}
                       axisLine={{ stroke: '#cbd5e1' }}
                       tickLine={false}
+                      height={80}
                     />
 
                     <YAxis
@@ -525,6 +590,10 @@ function Relatorios({ empresaAtiva }) {
 
                     <Tooltip
                       cursor={{ fill: '#eff6ff' }}
+                      formatter={(value) => [value, 'Saídas']}
+                      labelFormatter={(_, payload) =>
+                        payload?.[0]?.payload?.nomeCompleto || ''
+                      }
                       contentStyle={{
                         borderRadius: '12px',
                         border: '1px solid #e2e8f0',
