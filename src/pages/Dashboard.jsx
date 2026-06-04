@@ -23,12 +23,21 @@ function Dashboard({
   const [movimentacoes, setMovimentacoes] = useState([])
   const [carregandoMovimentacoes, setCarregandoMovimentacoes] = useState(false)
 
+  const [carregandoResumoDashboard, setCarregandoResumoDashboard] =
+    useState(false)
+
+  const [resumoDashboard, setResumoDashboard] = useState({
+    saidasHoje: 0,
+    produtoMaisVendidoHoje: null,
+  })
+
   useEffect(() => {
     if (empresaAtiva?.id) {
       setMostrarTodosProdutosDashboard(false)
       setBuscaProdutoDashboard('')
       carregarProdutos()
       carregarMovimentacoes()
+      carregarResumoDashboard()
     }
   }, [empresaAtiva])
 
@@ -60,6 +69,7 @@ function Dashboard({
       observacao: produto.observacao || '',
       ativo: produto.ativo,
       ordemExibicao: produto.ordem_exibicao ?? 9999,
+      emProducao: produto.em_producao || false,
     }))
 
     setProdutos(produtosFormatados)
@@ -108,6 +118,83 @@ function Dashboard({
     setCarregandoMovimentacoes(false)
   }
 
+  function obterDataLocal(data = new Date()) {
+    const ano = data.getFullYear()
+    const mes = String(data.getMonth() + 1).padStart(2, '0')
+    const dia = String(data.getDate()).padStart(2, '0')
+
+    return `${ano}-${mes}-${dia}`
+  }
+
+  async function carregarResumoDashboard() {
+    if (!empresaAtiva?.id) return
+
+    setCarregandoResumoDashboard(true)
+
+    const hoje = obterDataLocal()
+
+    const { data, error } = await supabase
+      .from('movimentacoes')
+      .select(`
+        id,
+        produto_id,
+        quantidade,
+        produtos (
+          nome
+        )
+      `)
+      .eq('empresa_id', empresaAtiva.id)
+      .eq('tipo', 'saida')
+      .eq('data_movimentacao', hoje)
+      .or('estornada.eq.false,estornada.is.null')
+      .is('movimentacao_original_id', null)
+
+    if (error) {
+      console.error('Erro ao carregar resumo da dashboard:', error)
+      setResumoDashboard({
+        saidasHoje: 0,
+        produtoMaisVendidoHoje: null,
+      })
+      setCarregandoResumoDashboard(false)
+      return
+    }
+
+    const saidasHoje = data.reduce(
+      (total, movimentacao) => total + Number(movimentacao.quantidade || 0),
+      0
+    )
+
+    const rankingProdutos = data.reduce((ranking, movimentacao) => {
+      const produtoExistente = ranking.find(
+        (item) => item.produtoId === movimentacao.produto_id
+      )
+
+      if (produtoExistente) {
+        produtoExistente.quantidade += Number(movimentacao.quantidade || 0)
+      } else {
+        ranking.push({
+          produtoId: movimentacao.produto_id,
+          produtoNome:
+            movimentacao.produtos?.nome || 'Produto não encontrado',
+          quantidade: Number(movimentacao.quantidade || 0),
+        })
+      }
+
+      return ranking
+    }, [])
+
+    const produtoMaisVendidoHoje = rankingProdutos.sort(
+      (a, b) => b.quantidade - a.quantidade
+    )[0]
+
+    setResumoDashboard({
+      saidasHoje,
+      produtoMaisVendidoHoje,
+    })
+
+    setCarregandoResumoDashboard(false)
+  }
+
   const produtosAtivos = produtos
     .filter((produto) => produto.ativo)
     .sort((a, b) => {
@@ -120,6 +207,10 @@ function Dashboard({
 
       return a.nome.localeCompare(b.nome, 'pt-BR')
     })
+
+  const produtosEmProducao = produtosAtivos.filter(
+    (produto) => produto.emProducao
+  )
 
   const produtosFiltradosDashboard = produtosAtivos.filter((produto) => {
     const busca = buscaProdutoDashboard.toLowerCase().trim()
@@ -146,46 +237,25 @@ function Dashboard({
       !movimentacao.estornada && !movimentacao.movimentacaoOriginalId
   )
 
-  const dataAtual = new Date()
-  const mesAtual = String(dataAtual.getMonth() + 1).padStart(2, '0')
-  const anoAtual = String(dataAtual.getFullYear())
-
-  const movimentacoesDoMes = movimentacoesValidas.filter((movimentacao) => {
-    const [ano, mes] = movimentacao.data.split('-')
-
-    return ano === anoAtual && mes === mesAtual
-  })
-
-  const saidasNoMes = movimentacoesDoMes
-    .filter((movimentacao) => movimentacao.tipo === 'saida')
-    .reduce((total, movimentacao) => total + movimentacao.quantidade, 0)
-
-  const produtoMaisVendido = movimentacoesDoMes
-    .filter((movimentacao) => movimentacao.tipo === 'saida')
-    .reduce((ranking, movimentacao) => {
-      const produtoExistente = ranking.find(
-        (item) => item.produtoId === movimentacao.produtoId
-      )
-
-      if (produtoExistente) {
-        produtoExistente.quantidade += movimentacao.quantidade
-      } else {
-        ranking.push({
-          produtoId: movimentacao.produtoId,
-          produtoNome: movimentacao.produtoNome,
-          quantidade: movimentacao.quantidade,
-        })
-      }
-
-      return ranking
-    }, [])
-    .sort((a, b) => b.quantidade - a.quantidade)[0]
-
   const ultimasMovimentacoes = [...movimentacoesValidas].slice(0, 5)
 
   function mudarTela(tela) {
     setTelaAtual(tela)
     setMenuMobileAberto(false)
+
+    if (tela === 'dashboard' && empresaAtiva?.id) {
+      carregarProdutos()
+      carregarMovimentacoes()
+      carregarResumoDashboard()
+    }
+  }
+
+  function formatarDataBrasil(data) {
+    if (!data) return '-'
+
+    const [ano, mes, dia] = data.split('-')
+
+    return `${dia}/${mes}/${ano}`
   }
 
   function renderizarConteudo() {
@@ -382,33 +452,75 @@ function Dashboard({
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 gap-5">
           <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Produtos cadastrados</p>
-            <strong className="mt-2 block text-3xl text-slate-900">
-              {produtosAtivos.length}
-            </strong>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  Itens em produção
+                </h3>
+              </div>
+
+              {produtosEmProducao.length > 5 && (
+                <span className="text-xs font-semibold text-slate-400">
+                  +{produtosEmProducao.length - 5} item(ns) em produção
+                </span>
+              )}
+            </div>
+
+            {produtosEmProducao.length > 0 ? (
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                {produtosEmProducao.slice(0, 5).map((produto) => (
+                  <div
+                    key={produto.id}
+                    className="rounded-xl border border-blue-100 bg-blue-50 p-4"
+                  >
+                    <strong className="block text-base text-slate-900">
+                      {produto.nome}
+                    </strong>
+
+                    <p className="mt-1 text-sm text-slate-600">
+                      Estoque atual: {produto.estoqueAtual}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-4">
+                <strong className="block text-base text-slate-700">
+                  Nenhum item em produção
+                </strong>
+              </div>
+            )}
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Saídas no mês</p>
-            <strong className="mt-2 block text-3xl text-slate-900">
-              {saidasNoMes}
-            </strong>
-          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div className="bg-white rounded-2xl shadow-sm p-5">
+              <p className="text-sm text-slate-500">Saídas hoje</p>
+              <strong className="mt-2 block text-3xl text-slate-900">
+                {carregandoResumoDashboard
+                  ? '...'
+                  : resumoDashboard.saidasHoje}
+              </strong>
+            </div>
 
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Estoque baixo</p>
-            <strong className="mt-2 block text-3xl text-red-600">
-              {produtosBaixoEstoque.length}
-            </strong>
-          </div>
+            <div className="bg-white rounded-2xl shadow-sm p-5">
+              <p className="text-sm text-slate-500">Estoque baixo</p>
+              <strong className="mt-2 block text-3xl text-red-600">
+                {produtosBaixoEstoque.length}
+              </strong>
+            </div>
 
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Mais vendido</p>
-            <strong className="mt-2 block text-lg text-slate-900">
-              {produtoMaisVendido ? produtoMaisVendido.produtoNome : 'Sem vendas'}
-            </strong>
+            <div className="bg-white rounded-2xl shadow-sm p-5">
+              <p className="text-sm text-slate-500">Mais vendido hoje</p>
+              <strong className="mt-2 block text-lg text-slate-900">
+                {carregandoResumoDashboard
+                  ? '...'
+                  : resumoDashboard.produtoMaisVendidoHoje
+                    ? resumoDashboard.produtoMaisVendidoHoje.produtoNome
+                    : 'Sem vendas'}
+              </strong>
+            </div>
           </div>
         </div>
 
@@ -475,7 +587,7 @@ function Dashboard({
                       </td>
 
                       <td className="py-3 text-slate-700">
-                        {movimentacao.data}
+                        {formatarDataBrasil(movimentacao.data)}
                       </td>
                     </tr>
                   ))}

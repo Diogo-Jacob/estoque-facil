@@ -15,6 +15,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
     estoqueAtual: '',
     estoqueMinimo: '',
     observacao: '',
+    emProducao: false,
   })
 
   const produtosFiltrados = produtos.filter((produto) => {
@@ -26,6 +27,11 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       produto.categoria.toLowerCase().includes(textoBusca)
     )
   })
+
+  const produtosAtivos = produtos.filter((produto) => produto.ativo)
+  const produtosEmProducao = produtosAtivos.filter(
+    (produto) => produto.emProducao
+  )
 
   function atualizarCampo(campo, valor) {
     setFormProduto({
@@ -42,6 +48,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       estoqueAtual: '',
       estoqueMinimo: '',
       observacao: '',
+      emProducao: false,
     })
 
     setProdutoEditandoId(null)
@@ -59,6 +66,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       estoqueAtual: '',
       estoqueMinimo: '',
       observacao: '',
+      emProducao: false,
     })
 
     setMostrarFormulario(true)
@@ -75,6 +83,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       estoqueAtual: produto.estoqueAtual,
       estoqueMinimo: produto.estoqueMinimo,
       observacao: produto.observacao || '',
+      emProducao: produto.emProducao || false,
     })
 
     setMostrarFormulario(true)
@@ -111,6 +120,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       estoque_atual: Number(formProduto.estoqueAtual || 0),
       estoque_minimo: Number(formProduto.estoqueMinimo || 0),
       observacao: formProduto.observacao.trim() || null,
+      em_producao: formProduto.emProducao,
       ativo: true,
     }
 
@@ -173,6 +183,8 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       estoqueMinimo: data.estoque_minimo,
       observacao: data.observacao || '',
       ativo: data.ativo,
+      emProducao: data.em_producao || false,
+      ordemExibicao: data.ordem_exibicao ?? 9999,
     }
   }
 
@@ -224,6 +236,14 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       )
     }
 
+    if (produto.emProducao) {
+      return (
+        <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+          Em produção
+        </span>
+      )
+    }
+
     if (baixoEstoque) {
       return (
         <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
@@ -248,8 +268,6 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
           <p className="mt-2 text-slate-600">
             Cadastre, edite e acompanhe o estoque dos produtos.
           </p>
-
-          
         </div>
 
         <button
@@ -258,6 +276,29 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
         >
           {mostrarFormulario ? 'Fechar formulário' : 'Cadastrar produto'}
         </button>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <p className="text-sm text-slate-500">Produtos cadastrados</p>
+          <strong className="mt-2 block text-3xl text-slate-900">
+            {produtosAtivos.length}
+          </strong>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <p className="text-sm text-slate-500">Itens em produção</p>
+          <strong className="mt-2 block text-3xl text-blue-600">
+            {produtosEmProducao.length}
+          </strong>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <p className="text-sm text-slate-500">Produtos inativos</p>
+          <strong className="mt-2 block text-3xl text-slate-900">
+            {produtos.filter((produto) => !produto.ativo).length}
+          </strong>
+        </div>
       </div>
 
       {mostrarFormulario && (
@@ -351,6 +392,30 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
                 placeholder="Ex: compatível com KTM, Sherco e MXF"
                 className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-4 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formProduto.emProducao}
+                  onChange={(event) =>
+                    atualizarCampo('emProducao', event.target.checked)
+                  }
+                  className="mt-1 h-4 w-4"
+                />
+
+                <div>
+                  <span className="block text-sm font-semibold text-slate-900">
+                    Item em produção
+                  </span>
+
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Marque quando este produto estiver sendo produzido. Ele
+                    aparecerá no card “Itens em produção” da Dashboard.
+                  </span>
+                </div>
+              </label>
             </div>
           </div>
 

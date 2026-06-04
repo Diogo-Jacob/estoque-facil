@@ -12,47 +12,50 @@ import {
 import { supabase } from '../services/supabase'
 
 function Relatorios({ empresaAtiva }) {
-  const dataAtual = new Date()
+  function obterDataLocal(data = new Date()) {
+    const ano = data.getFullYear()
+    const mes = String(data.getMonth() + 1).padStart(2, '0')
+    const dia = String(data.getDate()).padStart(2, '0')
 
-  const [diaSelecionado, setDiaSelecionado] = useState('')
-  const [mesSelecionado, setMesSelecionado] = useState('')
-  const [anoSelecionado, setAnoSelecionado] = useState(
-    String(dataAtual.getFullYear())
-  )
+    return `${ano}-${mes}-${dia}`
+  }
+
+  function obterPrimeiroDiaDoMes() {
+    const data = new Date()
+    const ano = data.getFullYear()
+    const mes = String(data.getMonth() + 1).padStart(2, '0')
+
+    return `${ano}-${mes}-01`
+  }
+
+  const [dataInicial, setDataInicial] = useState(obterPrimeiroDiaDoMes())
+  const [dataFinal, setDataFinal] = useState(obterDataLocal())
   const [buscaProduto, setBuscaProduto] = useState('')
   const [relatorioPorProduto, setRelatorioPorProduto] = useState([])
   const [carregandoRelatorio, setCarregandoRelatorio] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
 
-  const nomesMeses = [
-    { valor: '01', nome: 'Janeiro' },
-    { valor: '02', nome: 'Fevereiro' },
-    { valor: '03', nome: 'Março' },
-    { valor: '04', nome: 'Abril' },
-    { valor: '05', nome: 'Maio' },
-    { valor: '06', nome: 'Junho' },
-    { valor: '07', nome: 'Julho' },
-    { valor: '08', nome: 'Agosto' },
-    { valor: '09', nome: 'Setembro' },
-    { valor: '10', nome: 'Outubro' },
-    { valor: '11', nome: 'Novembro' },
-    { valor: '12', nome: 'Dezembro' },
-  ]
-
   useEffect(() => {
-    if (empresaAtiva?.id) {
+    if (empresaAtiva?.id && dataInicial && dataFinal) {
       carregarRelatorio()
     }
-  }, [empresaAtiva, diaSelecionado, mesSelecionado, anoSelecionado, buscaProduto])
+  }, [empresaAtiva, dataInicial, dataFinal, buscaProduto])
 
   async function carregarRelatorio() {
+    if (!dataInicial || !dataFinal) return
+
+    if (dataInicial > dataFinal) {
+      setRelatorioPorProduto([])
+      alert('A data inicial não pode ser maior que a data final.')
+      return
+    }
+
     setCarregandoRelatorio(true)
 
     const { data, error } = await supabase.rpc('relatorio_produtos_periodo', {
       p_empresa_id: empresaAtiva.id,
-      p_ano: Number(anoSelecionado),
-      p_mes: mesSelecionado ? Number(mesSelecionado) : null,
-      p_dia: diaSelecionado ? Number(diaSelecionado) : null,
+      p_data_inicial: dataInicial,
+      p_data_final: dataFinal,
       p_busca: buscaProduto.trim(),
     })
 
@@ -77,20 +80,25 @@ function Relatorios({ empresaAtiva }) {
     setCarregandoRelatorio(false)
   }
 
-  function calcularQuantidadeDiasDoMes(mes, ano) {
-    if (!mes) return 31
+  function formatarDataBrasil(data) {
+    if (!data) return '-'
 
-    return new Date(Number(ano), Number(mes), 0).getDate()
+    const [ano, mes, dia] = data.split('-')
+
+    return `${dia}/${mes}/${ano}`
   }
 
-  const quantidadeDias = calcularQuantidadeDiasDoMes(
-    mesSelecionado,
-    anoSelecionado
-  )
+  function gerarTextoPeriodo() {
+    if (!dataInicial || !dataFinal) {
+      return 'Selecione um período'
+    }
 
-  const diasDisponiveis = Array.from({ length: quantidadeDias }, (_, index) =>
-    String(index + 1).padStart(2, '0')
-  )
+    if (dataInicial === dataFinal) {
+      return `Dia ${formatarDataBrasil(dataInicial)}`
+    }
+
+    return `${formatarDataBrasil(dataInicial)} a ${formatarDataBrasil(dataFinal)}`
+  }
 
   const totalEntradas = relatorioPorProduto.reduce(
     (total, item) => total + item.entradas,
@@ -126,26 +134,6 @@ function Relatorios({ empresaAtiva }) {
     900,
     dadosGraficoMaisVendidos.length * 170
   )
-
-  function gerarTextoPeriodo() {
-    const nomeMes = nomesMeses.find(
-      (mes) => mes.valor === mesSelecionado
-    )?.nome
-
-    if (diaSelecionado && mesSelecionado) {
-      return `Dia ${diaSelecionado}/${mesSelecionado}/${anoSelecionado}`
-    }
-
-    if (diaSelecionado && !mesSelecionado) {
-      return `Dia ${diaSelecionado} de todos os meses de ${anoSelecionado}`
-    }
-
-    if (!diaSelecionado && mesSelecionado) {
-      return `${nomeMes} de ${anoSelecionado}`
-    }
-
-    return `Ano inteiro de ${anoSelecionado}`
-  }
 
   function StatusEstoque({ item }) {
     const baixoEstoque = item.estoqueAtual < item.estoqueMinimo
@@ -343,14 +331,6 @@ function Relatorios({ empresaAtiva }) {
           )
         })
       })
-
-      if (dadosGraficoMaisVendidos.length > 12) {
-        y += alturaGrafico + 28
-
-        pdf.setTextColor(71, 85, 105)
-        pdf.setFont('helvetica', 'normal')
-        pdf.setFontSize(9)
-      }
     }
 
     return pdf
@@ -362,9 +342,7 @@ function Relatorios({ empresaAtiva }) {
 
       const pdf = gerarPdfRelatorio()
 
-      const nomeArquivo = `relatorio-estoque-${anoSelecionado}${
-        mesSelecionado ? `-${mesSelecionado}` : ''
-      }${diaSelecionado ? `-${diaSelecionado}` : ''}.pdf`
+      const nomeArquivo = `relatorio-estoque-${dataInicial}-a-${dataFinal}.pdf`
 
       pdf.save(nomeArquivo)
     } catch (error) {
@@ -464,67 +442,47 @@ function Relatorios({ empresaAtiva }) {
         </div>
 
         {!gerandoPdf && (
-          <div className="mt-6 bg-white rounded-2xl shadow-sm p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 print:hidden">
-            <select
-              value={diaSelecionado}
-              onChange={(event) => setDiaSelecionado(event.target.value)}
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="">Selecionar dia</option>
+          <div className="mt-6 bg-white rounded-2xl shadow-sm p-5 grid grid-cols-1 md:grid-cols-3 gap-4 print:hidden">
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-slate-600">
+                Data inicial
+              </label>
 
-              {diasDisponiveis.map((dia) => (
-                <option key={dia} value={dia}>
-                  Dia {dia}
-                </option>
-              ))}
-            </select>
+              <input
+                type="date"
+                value={dataInicial}
+                onChange={(event) => setDataInicial(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
 
-            <select
-              value={mesSelecionado}
-              onChange={(event) => {
-                const novoMes = event.target.value
-                const novaQuantidadeDias = calcularQuantidadeDiasDoMes(
-                  novoMes,
-                  anoSelecionado
-                )
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-slate-600">
+                Data final
+              </label>
 
-                setMesSelecionado(novoMes)
+              <input
+                type="date"
+                value={dataFinal}
+                min={dataInicial}
+                onChange={(event) => setDataFinal(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
 
-                if (
-                  diaSelecionado &&
-                  Number(diaSelecionado) > novaQuantidadeDias
-                ) {
-                  setDiaSelecionado('')
-                }
-              }}
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="">Selecionar mês</option>
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-slate-600">
+                Produto
+              </label>
 
-              {nomesMeses.map((mes) => (
-                <option key={mes.valor} value={mes.valor}>
-                  {mes.nome}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={anoSelecionado}
-              onChange={(event) => setAnoSelecionado(event.target.value)}
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="2026">2026</option>
-              <option value="2025">2025</option>
-              <option value="2024">2024</option>
-            </select>
-
-            <input
-              type="text"
-              value={buscaProduto}
-              onChange={(event) => setBuscaProduto(event.target.value)}
-              placeholder="Filtrar por produto"
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
+              <input
+                type="text"
+                value={buscaProduto}
+                onChange={(event) => setBuscaProduto(event.target.value)}
+                placeholder="Filtrar por produto"
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
           </div>
         )}
 
