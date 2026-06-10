@@ -30,7 +30,7 @@ function Movimentacoes({
 
   const [novaMovimentacao, setNovaMovimentacao] = useState({
     produtoId: '',
-    tipo: 'entrada',
+    tipo: 'saida',
     data: new Date().toISOString().split('T')[0],
     quantidade: '',
     observacao: '',
@@ -245,7 +245,7 @@ function Movimentacoes({
 
     setNovaMovimentacao({
       produtoId: '',
-      tipo: 'entrada',
+      tipo: 'saida',
       data: new Date().toISOString().split('T')[0],
       quantidade: '',
       observacao: '',

@@ -15,7 +15,6 @@ function Dashboard({
     useState(false)
   const [buscaProdutoDashboard, setBuscaProdutoDashboard] = useState('')
   const [telaAtual, setTelaAtual] = useState('dashboard')
-  const [menuMobileAberto, setMenuMobileAberto] = useState(false)
 
   const [produtos, setProdutos] = useState([])
   const [carregandoProdutos, setCarregandoProdutos] = useState(false)
@@ -241,7 +240,6 @@ function Dashboard({
 
   function mudarTela(tela) {
     setTelaAtual(tela)
-    setMenuMobileAberto(false)
 
     if (tela === 'dashboard' && empresaAtiva?.id) {
       carregarProdutos()
@@ -256,6 +254,18 @@ function Dashboard({
     const [ano, mes, dia] = data.split('-')
 
     return `${dia}/${mes}/${ano}`
+  }
+
+  function estiloBotaoMenu(tela) {
+    return telaAtual === tela
+      ? 'rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white'
+      : 'rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100'
+  }
+
+  function estiloBotaoMenuMobile(tela) {
+    return telaAtual === tela
+      ? 'rounded-xl bg-blue-50 px-2 py-2 text-xs font-bold text-blue-700'
+      : 'rounded-xl px-2 py-2 text-xs font-semibold text-slate-500'
   }
 
   function renderizarConteudo() {
@@ -606,12 +616,6 @@ function Dashboard({
     )
   }
 
-  function estiloBotaoMenu(tela) {
-    return telaAtual === tela
-      ? 'rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white'
-      : 'rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100'
-  }
-
   return (
     <main className="min-h-screen bg-slate-100">
       <header className="bg-white border-b border-slate-200">
@@ -626,13 +630,6 @@ function Dashboard({
                 Estoque Fácil
               </h1>
             </div>
-
-            <button
-              onClick={() => setMenuMobileAberto(!menuMobileAberto)}
-              className="lg:hidden rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
-            >
-              ☰ Menu
-            </button>
 
             <nav className="hidden lg:flex flex-wrap gap-2">
               {empresasUsuario.length > 1 && (
@@ -691,72 +688,48 @@ function Dashboard({
               </button>
             </nav>
           </div>
-
-          {menuMobileAberto && (
-            <nav className="lg:hidden mt-4 grid grid-cols-1 gap-2">
-              {empresasUsuario.length > 1 && (
-                <select
-                  value={empresaAtiva?.id || ''}
-                  onChange={(event) => {
-                    const empresaSelecionada = empresasUsuario.find(
-                      (empresa) => empresa.id === event.target.value
-                    )
-
-                    setEmpresaAtiva(empresaSelecionada)
-                    setMenuMobileAberto(false)
-                  }}
-                  className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                >
-                  {empresasUsuario.map((empresa) => (
-                    <option key={empresa.id} value={empresa.id}>
-                      {empresa.nome}
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              <button
-                onClick={() => mudarTela('dashboard')}
-                className={estiloBotaoMenu('dashboard')}
-              >
-                Painel Administrativo
-              </button>
-
-              <button
-                onClick={() => mudarTela('produtos')}
-                className={estiloBotaoMenu('produtos')}
-              >
-                Produtos
-              </button>
-
-              <button
-                onClick={() => mudarTela('movimentacoes')}
-                className={estiloBotaoMenu('movimentacoes')}
-              >
-                Movimentações
-              </button>
-
-              <button
-                onClick={() => mudarTela('relatorios')}
-                className={estiloBotaoMenu('relatorios')}
-              >
-                Relatórios
-              </button>
-
-              <button
-                onClick={onLogout}
-                className="mt-2 text-sm font-medium text-slate-400 hover:text-red-600"
-              >
-                Sair da conta
-              </button>
-            </nav>
-          )}
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-6 pt-8 pb-28 lg:pb-8">
         {renderizarConteudo()}
       </div>
+
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white px-3 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
+        <div className="grid grid-cols-4 gap-1">
+          <button
+            onClick={() => mudarTela('dashboard')}
+            className={estiloBotaoMenuMobile('dashboard')}
+          >
+            <span className="block text-lg">⌂</span>
+            Painel
+          </button>
+
+          <button
+            onClick={() => mudarTela('produtos')}
+            className={estiloBotaoMenuMobile('produtos')}
+          >
+            <span className="block text-lg">□</span>
+            Produtos
+          </button>
+
+          <button
+            onClick={() => mudarTela('movimentacoes')}
+            className={estiloBotaoMenuMobile('movimentacoes')}
+          >
+            <span className="block text-lg">⇅</span>
+            Movim.
+          </button>
+
+          <button
+            onClick={() => mudarTela('relatorios')}
+            className={estiloBotaoMenuMobile('relatorios')}
+          >
+            <span className="block text-lg">▤</span>
+            Relat.
+          </button>
+        </div>
+      </nav>
     </main>
   )
 }
