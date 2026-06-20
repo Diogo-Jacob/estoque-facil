@@ -32,6 +32,7 @@ function Relatorios({ empresaAtiva }) {
   const [dataFinal, setDataFinal] = useState(obterDataLocal())
   const [buscaProduto, setBuscaProduto] = useState('')
   const [relatorioPorProduto, setRelatorioPorProduto] = useState([])
+  const [vendasDetalhadas, setVendasDetalhadas] = useState([])
   const [carregandoRelatorio, setCarregandoRelatorio] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
 
@@ -46,6 +47,7 @@ function Relatorios({ empresaAtiva }) {
 
     if (dataInicial > dataFinal) {
       setRelatorioPorProduto([])
+      setVendasDetalhadas([])
       alert('A data inicial não pode ser maior que a data final.')
       return
     }
@@ -76,7 +78,47 @@ function Relatorios({ empresaAtiva }) {
       estoqueMinimo: item.estoque_minimo,
     }))
 
+    const { data: vendas, error: erroVendas } = await supabase
+      .from('movimentacoes')
+      .select(`
+        produto_id,
+        quantidade,
+        canal_venda,
+        produtos (
+          nome
+        )
+      `)
+      .eq('empresa_id', empresaAtiva.id)
+      .eq('tipo', 'saida')
+      .gte('data_movimentacao', dataInicial)
+      .lte('data_movimentacao', dataFinal)
+      .or('estornada.eq.false,estornada.is.null')
+      .is('movimentacao_original_id', null)
+
+    if (erroVendas) {
+      console.error('Erro ao carregar vendas por canal:', erroVendas)
+      alert(erroVendas.message || 'Erro ao carregar vendas por canal.')
+      setRelatorioPorProduto(relatorioFormatado)
+      setVendasDetalhadas([])
+      setCarregandoRelatorio(false)
+      return
+    }
+
+    const produtosPermitidos = new Set(
+      relatorioFormatado.map((item) => item.produtoId)
+    )
+
+    const vendasFormatadas = vendas
+      .filter((venda) => produtosPermitidos.has(venda.produto_id))
+      .map((venda) => ({
+        produtoId: venda.produto_id,
+        produto: venda.produtos?.nome || 'Produto não encontrado',
+        quantidade: Number(venda.quantidade || 0),
+        canalVenda: venda.canal_venda || '',
+      }))
+
     setRelatorioPorProduto(relatorioFormatado)
+    setVendasDetalhadas(vendasFormatadas)
     setCarregandoRelatorio(false)
   }
 
@@ -135,6 +177,61 @@ function Relatorios({ empresaAtiva }) {
     dadosGraficoMaisVendidos.length * 170
   )
 
+  const canaisVenda = [
+    { valor: 'dega_moto_parts', nome: 'Dega Moto Parts' },
+    { valor: 'emplajoi', nome: 'Emplajoi' },
+    { valor: 'fecha_molde', nome: 'Fecha Molde' },
+    { valor: 'shopee', nome: 'Shopee' },
+  ]
+
+  function formatarCanalVenda(canal) {
+    if (!canal) return 'Não informado'
+
+    const canalEncontrado = canaisVenda.find((item) => item.valor === canal)
+
+    return canalEncontrado?.nome || canal
+  }
+
+  const rankingProdutosVendidos = relatorioPorProduto
+    .filter((item) => item.saidas > 0)
+    .sort((a, b) => b.saidas - a.saidas)
+
+  const rankingCanaisVenda = Object.values(
+    vendasDetalhadas.reduce((ranking, venda) => {
+      const chaveCanal = venda.canalVenda || 'nao_informado'
+      const nomeCanal = formatarCanalVenda(venda.canalVenda)
+
+      if (!ranking[chaveCanal]) {
+        ranking[chaveCanal] = {
+          canal: nomeCanal,
+          total: 0,
+          produtos: {},
+        }
+      }
+
+      ranking[chaveCanal].total += venda.quantidade
+
+      if (!ranking[chaveCanal].produtos[venda.produtoId]) {
+        ranking[chaveCanal].produtos[venda.produtoId] = {
+          produto: venda.produto,
+          quantidade: 0,
+        }
+      }
+
+      ranking[chaveCanal].produtos[venda.produtoId].quantidade +=
+        venda.quantidade
+
+      return ranking
+    }, {})
+  )
+    .map((canal) => ({
+      ...canal,
+      produtos: Object.values(canal.produtos).sort(
+        (a, b) => b.quantidade - a.quantidade
+      ),
+    }))
+    .sort((a, b) => b.total - a.total)
+
   function StatusEstoque({ item }) {
     const baixoEstoque = item.estoqueAtual < item.estoqueMinimo
 
@@ -189,7 +286,24 @@ function Relatorios({ empresaAtiva }) {
     let y = 18
 
     const larguraPagina = pdf.internal.pageSize.getWidth()
+    const alturaPagina = pdf.internal.pageSize.getHeight()
     const larguraUtil = larguraPagina - margem * 2
+
+    function garantirEspaco(alturaNecessaria = 12) {
+      if (y + alturaNecessaria > alturaPagina - 15) {
+        pdf.addPage()
+        y = 18
+      }
+    }
+
+    function adicionarTituloSecao(titulo) {
+      garantirEspaco(14)
+      pdf.setTextColor(15, 23, 42)
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(14)
+      pdf.text(titulo, margem, y)
+      y += 9
+    }
 
     const titulo = 'Relatório'
     const periodo = `Período analisado: ${gerarTextoPeriodo()}`
@@ -250,29 +364,24 @@ function Relatorios({ empresaAtiva }) {
 
     y += 45
 
-    pdf.setTextColor(15, 23, 42)
-    pdf.setFont('helvetica', 'bold')
-    pdf.setFontSize(14)
-    pdf.text('Gráfico de Vendas', margem, y)
-
-    y += 10
+    adicionarTituloSecao('Gráfico de Vendas')
 
     if (dadosGraficoMaisVendidos.length === 0) {
       pdf.setTextColor(71, 85, 105)
       pdf.setFont('helvetica', 'normal')
       pdf.setFontSize(10)
       pdf.text('Nenhuma saída registrada no período selecionado.', margem, y)
+      y += 12
     } else {
-      const dadosPdf = dadosGraficoMaisVendidos.slice(0, 12)
+      const dadosPdf = dadosGraficoMaisVendidos.slice(0, 6)
       const alturaGrafico = 80
       const larguraGrafico = larguraUtil
       const xGrafico = margem
       const yGrafico = y
 
       const maiorValor = Math.max(...dadosPdf.map((item) => item.saidas))
-
       const quantidadeBarras = dadosPdf.length
-      const espacamento = 4
+      const espacamento = 10
       const larguraBarra =
         (larguraGrafico - espacamento * (quantidadeBarras - 1)) /
         quantidadeBarras
@@ -307,29 +416,150 @@ function Relatorios({ empresaAtiva }) {
 
         pdf.setTextColor(71, 85, 105)
         pdf.setFont('helvetica', 'normal')
-        pdf.setFontSize(7)
+        pdf.setFontSize(10)
+
+        const larguraNome = Math.max(18, larguraBarra - 5)
 
         const nomeQuebrado = pdf.splitTextToSize(
           item.nomeCompleto,
-          larguraBarra + 6
+          larguraNome
         )
 
-        const linhasNome = nomeQuebrado.slice(0, 3)
+        const linhasNome = nomeQuebrado.slice(0, 10)
 
-        if (nomeQuebrado.length > 3) {
-          linhasNome[2] = `${linhasNome[2].slice(0, 10)}...`
+        if (nomeQuebrado.length > 10) {
+          linhasNome[4] = `${linhasNome[4].slice(0, 12)}...`
         }
 
         linhasNome.forEach((linha, linhaIndex) => {
           pdf.text(
             linha,
             x + larguraBarra / 2,
-            yGrafico + alturaGrafico + 6 + linhaIndex * 4,
-            {
-              align: 'center',
-            }
+            yGrafico + alturaGrafico + 7 + linhaIndex * 4.2,
+            { align: 'center' }
           )
         })
+      })
+
+      y += alturaGrafico + 50
+    }
+
+    adicionarTituloSecao('Produtos vendidos no período')
+
+    if (rankingProdutosVendidos.length === 0) {
+      pdf.setTextColor(71, 85, 105)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(10)
+      pdf.text('Nenhum produto vendido no período selecionado.', margem, y)
+      y += 10
+    } else {
+      garantirEspaco(12)
+      pdf.setFillColor(241, 245, 249)
+      pdf.rect(margem, y, larguraUtil, 8, 'F')
+      pdf.setTextColor(71, 85, 105)
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(9)
+      pdf.text('Pos.', margem + 3, y + 5.5)
+      pdf.text('Produto', margem + 18, y + 5.5)
+      pdf.text('Quantidade', margem + larguraUtil - 3, y + 5.5, {
+        align: 'right',
+      })
+      y += 8
+
+      rankingProdutosVendidos.forEach((item, index) => {
+        garantirEspaco(9)
+        const linhasProduto = pdf.splitTextToSize(item.produto, larguraUtil - 55)
+        const alturaLinha = Math.max(8, linhasProduto.length * 4 + 3)
+
+        pdf.setDrawColor(226, 232, 240)
+        pdf.line(margem, y + alturaLinha, margem + larguraUtil, y + alturaLinha)
+
+        pdf.setTextColor(71, 85, 105)
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(9)
+        pdf.text(`${index + 1}º`, margem + 3, y + 5.5)
+        pdf.text(linhasProduto, margem + 18, y + 5.5)
+
+        pdf.setTextColor(15, 23, 42)
+        pdf.setFont('helvetica', 'bold')
+        pdf.text(String(item.saidas), margem + larguraUtil - 3, y + 5.5, {
+          align: 'right',
+        })
+
+        y += alturaLinha
+      })
+
+      y += 8
+    }
+
+    adicionarTituloSecao('Ranking dos canais de venda')
+
+    if (rankingCanaisVenda.length === 0) {
+      pdf.setTextColor(71, 85, 105)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(10)
+      pdf.text('Nenhuma venda com canal disponível no período.', margem, y)
+    } else {
+      rankingCanaisVenda.forEach((canal, indexCanal) => {
+        garantirEspaco(22)
+
+        pdf.setFillColor(239, 246, 255)
+        pdf.roundedRect(margem, y, larguraUtil, 13, 2, 2, 'F')
+
+        pdf.setTextColor(30, 64, 175)
+        pdf.setFont('helvetica', 'bold')
+        pdf.setFontSize(11)
+        pdf.text(`${indexCanal + 1}º — ${canal.canal}`, margem + 4, y + 5.5)
+
+        pdf.setFontSize(9)
+        pdf.text(
+          `Total vendido: ${canal.total}`,
+          margem + larguraUtil - 4,
+          y + 5.5,
+          { align: 'right' }
+        )
+
+        pdf.setTextColor(71, 85, 105)
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(8)
+        pdf.text(`${canal.produtos.length} produto(s)`, margem + 4, y + 10)
+
+        y += 16
+
+        canal.produtos.forEach((produto) => {
+          garantirEspaco(8)
+          const linhasProduto = pdf.splitTextToSize(
+            produto.produto,
+            larguraUtil - 40
+          )
+          const alturaLinha = Math.max(7, linhasProduto.length * 4 + 2)
+
+          pdf.setTextColor(51, 65, 85)
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(9)
+          pdf.text(linhasProduto, margem + 6, y + 4.5)
+
+          pdf.setTextColor(15, 23, 42)
+          pdf.setFont('helvetica', 'bold')
+          pdf.text(
+            String(produto.quantidade),
+            margem + larguraUtil - 4,
+            y + 4.5,
+            { align: 'right' }
+          )
+
+          pdf.setDrawColor(241, 245, 249)
+          pdf.line(
+            margem + 4,
+            y + alturaLinha,
+            margem + larguraUtil - 4,
+            y + alturaLinha
+          )
+
+          y += alturaLinha
+        })
+
+        y += 8
       })
     }
 

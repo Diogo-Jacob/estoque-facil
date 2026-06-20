@@ -33,8 +33,31 @@ function Movimentacoes({
     tipo: 'saida',
     data: new Date().toISOString().split('T')[0],
     quantidade: '',
+    canalVenda: '',
     observacao: '',
   })
+
+  const empresaUsaCanalVenda =
+    empresaAtiva?.usa_canal_venda === true ||
+    empresaAtiva?.usaCanalVenda === true ||
+    empresaAtiva?.nome?.toLowerCase().includes('dega')
+
+  const canaisVenda = [
+    { valor: 'dega_moto_parts', nome: 'Dega Moto Parts' },
+    { valor: 'emplajoi', nome: 'Emplajoi' },
+    { valor: 'fecha_molde', nome: 'Fecha Molde' },
+    { valor: 'shopee', nome: 'Shopee' },
+  ]
+
+  function formatarCanalVenda(canal) {
+    if (!canal) return 'Não informado'
+
+    const canalEncontrado = canaisVenda.find(
+      (item) => item.valor === canal
+    )
+
+    return canalEncontrado?.nome || canal
+  }
 
   const produtosAtivos = produtos.filter((produto) => produto.ativo)
 
@@ -76,10 +99,13 @@ function Movimentacoes({
     estoqueAposMovimentacao < produtoSelecionado.estoqueMinimo
 
   function atualizarCampo(campo, valor) {
-    setNovaMovimentacao({
-      ...novaMovimentacao,
+    setNovaMovimentacao((movimentacaoAtual) => ({
+      ...movimentacaoAtual,
       [campo]: valor,
-    })
+      ...(campo === 'tipo' && valor === 'entrada'
+        ? { canalVenda: '' }
+        : {}),
+    }))
   }
 
   function selecionarProduto(produto) {
@@ -102,6 +128,7 @@ function Movimentacoes({
       tipo: movimentacao.tipo,
       quantidade: movimentacao.quantidade,
       data: movimentacao.data_movimentacao,
+      canalVenda: movimentacao.canal_venda || '',
       observacao: movimentacao.observacao || '',
       criadaEm: movimentacao.criada_em,
       estornada: movimentacao.estornada,
@@ -214,6 +241,10 @@ function Movimentacoes({
       tipo: novaMovimentacao.tipo,
       quantidade,
       data_movimentacao: novaMovimentacao.data,
+      canal_venda:
+        empresaUsaCanalVenda && novaMovimentacao.tipo === 'saida'
+          ? novaMovimentacao.canalVenda || null
+          : null,
       observacao: novaMovimentacao.observacao.trim() || null,
     }
 
@@ -248,6 +279,7 @@ function Movimentacoes({
       tipo: 'saida',
       data: new Date().toISOString().split('T')[0],
       quantidade: '',
+      canalVenda: '',
       observacao: '',
     })
 
@@ -359,6 +391,9 @@ function Movimentacoes({
               <th className="px-5 py-4">Tipo</th>
               <th className="px-5 py-4">Quantidade</th>
               <th className="px-5 py-4">Data</th>
+              {empresaUsaCanalVenda && (
+                <th className="px-5 py-4">Canal</th>
+              )}
               <th className="px-5 py-4">Observação</th>
               <th className="px-5 py-4">Ações</th>
             </tr>
@@ -383,6 +418,14 @@ function Movimentacoes({
                   {movimentacao.data}
                 </td>
 
+                {empresaUsaCanalVenda && (
+                  <td className="px-5 py-4 text-slate-600">
+                    {movimentacao.tipo === 'saida'
+                      ? formatarCanalVenda(movimentacao.canalVenda)
+                      : '-'}
+                  </td>
+                )}
+
                 <td className="px-5 py-4 text-slate-600">
                   {movimentacao.observacao || '-'}
                 </td>
@@ -395,7 +438,10 @@ function Movimentacoes({
 
             {lista.length === 0 && (
               <tr>
-                <td colSpan="6" className="px-5 py-8 text-center text-slate-500">
+                <td
+                  colSpan={empresaUsaCanalVenda ? 7 : 6}
+                  className="px-5 py-8 text-center text-slate-500"
+                >
                   Nenhuma movimentação encontrada.
                 </td>
               </tr>
@@ -428,13 +474,28 @@ function Movimentacoes({
               <BadgeTipo tipo={movimentacao.tipo} />
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <div
+              className={
+                empresaUsaCanalVenda && movimentacao.tipo === 'saida'
+                  ? 'mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3'
+                  : 'mt-3 grid grid-cols-2 gap-3'
+              }
+            >
               <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Quantidade</p>
                 <p className="text-lg font-bold text-slate-900">
                   {movimentacao.quantidade}
                 </p>
               </div>
+
+              {empresaUsaCanalVenda && movimentacao.tipo === 'saida' && (
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Canal</p>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {formatarCanalVenda(movimentacao.canalVenda)}
+                  </p>
+                </div>
+              )}
 
               <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Observação</p>
@@ -595,6 +656,34 @@ function Movimentacoes({
                 className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
+
+            {empresaUsaCanalVenda && novaMovimentacao.tipo === 'saida' && (
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  Canal de venda <span className="font-normal text-slate-400">(opcional)</span>
+                </label>
+
+                <select
+                  value={novaMovimentacao.canalVenda}
+                  onChange={(event) =>
+                    atualizarCampo('canalVenda', event.target.value)
+                  }
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="">Selecione o canal de venda</option>
+
+                  {canaisVenda.map((canal) => (
+                    <option key={canal.valor} value={canal.valor}>
+                      {canal.nome}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="mt-2 text-xs text-slate-500">
+                  Se informado, o canal será incluído no ranking do relatório.
+                </p>
+              </div>
+            )}
 
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-slate-700">

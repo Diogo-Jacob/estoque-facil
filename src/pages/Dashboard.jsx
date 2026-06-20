@@ -107,6 +107,7 @@ function Dashboard({
       tipo: movimentacao.tipo,
       quantidade: movimentacao.quantidade,
       data: movimentacao.data_movimentacao,
+      canalVenda: movimentacao.canal_venda || '',
       observacao: movimentacao.observacao || '',
       criadaEm: movimentacao.criada_em,
       estornada: movimentacao.estornada,
