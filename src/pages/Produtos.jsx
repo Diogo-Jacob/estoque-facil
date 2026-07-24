@@ -18,6 +18,15 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
     emProducao: false,
   })
 
+  function formatarMoeda(valor) {
+    return Number(valor || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 6,
+    })
+  }
+
   const produtosFiltrados = produtos.filter((produto) => {
     const textoBusca = busca.toLowerCase()
 
@@ -47,6 +56,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       categoria: '',
       estoqueAtual: '',
       estoqueMinimo: '',
+      valorUnitario: '',
       observacao: '',
       emProducao: false,
     })
@@ -65,6 +75,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       categoria: '',
       estoqueAtual: '',
       estoqueMinimo: '',
+      valorUnitario: '',
       observacao: '',
       emProducao: false,
     })
@@ -82,6 +93,10 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       categoria: produto.categoria === 'Sem categoria' ? '' : produto.categoria,
       estoqueAtual: produto.estoqueAtual,
       estoqueMinimo: produto.estoqueMinimo,
+      valorUnitario:
+        produto.valorUnitario && Number(produto.valorUnitario) > 0
+          ? String(produto.valorUnitario)
+          : '',
       observacao: produto.observacao || '',
       emProducao: produto.emProducao || false,
     })
@@ -110,6 +125,11 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       return
     }
 
+    if (Number(formProduto.valorUnitario || 0) < 0) {
+      alert('O valor unitário não pode ser negativo.')
+      return
+    }
+
     setSalvando(true)
 
     const produtoParaSalvar = {
@@ -119,6 +139,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       categoria: formProduto.categoria.trim() || null,
       estoque_atual: Number(formProduto.estoqueAtual || 0),
       estoque_minimo: Number(formProduto.estoqueMinimo || 0),
+      valor_unitario: Number(formProduto.valorUnitario || 0),
       observacao: formProduto.observacao.trim() || null,
       em_producao: formProduto.emProducao,
       ativo: true,
@@ -181,6 +202,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       categoria: data.categoria || 'Sem categoria',
       estoqueAtual: data.estoque_atual,
       estoqueMinimo: data.estoque_minimo,
+      valorUnitario: Number(data.valor_unitario || 0),
       observacao: data.observacao || '',
       ativo: data.ativo,
       emProducao: data.em_producao || false,
@@ -381,6 +403,26 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
 
             <div>
               <label className="block text-sm font-medium text-slate-700">
+                Valor unitário
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.000001"
+                value={formProduto.valorUnitario}
+                onChange={(event) =>
+                  atualizarCampo('valorUnitario', event.target.value)
+                }
+                placeholder="Ex: 49.90"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Usado apenas para calcular o valor total vendido no relatório.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700">
                 Observação
               </label>
               <input
@@ -462,6 +504,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
                 <th className="px-5 py-4">Categoria</th>
                 <th className="px-5 py-4">Estoque</th>
                 <th className="px-5 py-4">Mínimo</th>
+                <th className="px-5 py-4">Valor</th>
                 <th className="px-5 py-4">Status</th>
                 <th className="px-5 py-4">Ações</th>
               </tr>
@@ -500,6 +543,10 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
 
                     <td className="px-5 py-4 text-slate-600">
                       {produto.estoqueMinimo}
+                    </td>
+
+                    <td className="px-5 py-4 text-slate-600">
+                      {formatarMoeda(produto.valorUnitario)}
                     </td>
 
                     <td className="px-5 py-4">
@@ -553,7 +600,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
               {!carregandoProdutos && produtosFiltrados.length === 0 && (
                 <tr>
                   <td
-                    colSpan="7"
+                    colSpan="8"
                     className="px-5 py-8 text-center text-slate-500"
                   >
                     Nenhum produto encontrado.
@@ -591,7 +638,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
                   <StatusProduto produto={produto} />
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="mt-4 grid grid-cols-3 gap-3">
                   <div className="rounded-xl bg-slate-50 p-3">
                     <p className="text-xs text-slate-500">Estoque</p>
                     <p className="text-xl font-bold text-slate-900">
@@ -605,6 +652,13 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
                       {produto.estoqueMinimo}
                     </p>
                   </div>
+                </div>
+
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Valor</p>
+                  <p className="text-sm font-bold text-slate-900">
+                    {formatarMoeda(produto.valorUnitario)}
+                  </p>
                 </div>
 
                 <div className="mt-3">

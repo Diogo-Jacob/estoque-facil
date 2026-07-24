@@ -76,6 +76,8 @@ function Relatorios({ empresaAtiva }) {
       saidas: Number(item.saidas),
       estoqueAtual: item.estoque_atual,
       estoqueMinimo: item.estoque_minimo,
+      valorUnitario: Number(item.valor_unitario || 0),
+      valorTotalVendido: Number(item.valor_total_vendido || 0),
     }))
 
     const { data: vendas, error: erroVendas } = await supabase
@@ -85,7 +87,8 @@ function Relatorios({ empresaAtiva }) {
         quantidade,
         canal_venda,
         produtos (
-          nome
+          nome,
+          valor_unitario
         )
       `)
       .eq('empresa_id', empresaAtiva.id)
@@ -114,6 +117,10 @@ function Relatorios({ empresaAtiva }) {
         produtoId: venda.produto_id,
         produto: venda.produtos?.nome || 'Produto não encontrado',
         quantidade: Number(venda.quantidade || 0),
+        valorUnitario: Number(venda.produtos?.valor_unitario || 0),
+        valorTotal:
+          Number(venda.quantidade || 0) *
+          Number(venda.produtos?.valor_unitario || 0),
         canalVenda: venda.canal_venda || '',
       }))
 
@@ -128,6 +135,15 @@ function Relatorios({ empresaAtiva }) {
     const [ano, mes, dia] = data.split('-')
 
     return `${dia}/${mes}/${ano}`
+  }
+
+  function formatarMoeda(valor) {
+    return Number(valor || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
   }
 
   function gerarTextoPeriodo() {
@@ -149,6 +165,11 @@ function Relatorios({ empresaAtiva }) {
 
   const totalSaidas = relatorioPorProduto.reduce(
     (total, item) => total + item.saidas,
+    0
+  )
+
+  const totalValorVendido = relatorioPorProduto.reduce(
+    (total, item) => total + item.valorTotalVendido,
     0
   )
 
@@ -205,21 +226,26 @@ function Relatorios({ empresaAtiva }) {
         ranking[chaveCanal] = {
           canal: nomeCanal,
           total: 0,
+          valorTotal: 0,
           produtos: {},
         }
       }
 
       ranking[chaveCanal].total += venda.quantidade
+      ranking[chaveCanal].valorTotal += venda.valorTotal
 
       if (!ranking[chaveCanal].produtos[venda.produtoId]) {
         ranking[chaveCanal].produtos[venda.produtoId] = {
           produto: venda.produto,
           quantidade: 0,
+          valorTotal: 0,
         }
       }
 
       ranking[chaveCanal].produtos[venda.produtoId].quantidade +=
         venda.quantidade
+      ranking[chaveCanal].produtos[venda.produtoId].valorTotal +=
+        venda.valorTotal
 
       return ranking
     }, {})
@@ -338,9 +364,13 @@ function Relatorios({ empresaAtiva }) {
             ? produtoMaisVendido.produto
             : 'Sem vendas',
       },
+      {
+        titulo: 'Valor total vendido',
+        valor: formatarMoeda(totalValorVendido),
+      },
     ]
 
-    const larguraCard = larguraUtil / 3 - 4
+    const larguraCard = larguraUtil / 4 - 4
 
     cards.forEach((card, index) => {
       const x = margem + index * (larguraCard + 6)
@@ -356,7 +386,7 @@ function Relatorios({ empresaAtiva }) {
 
       pdf.setTextColor(15, 23, 42)
       pdf.setFont('helvetica', 'bold')
-      pdf.setFontSize(index === 2 ? 10 : 16)
+      pdf.setFontSize(index === 2 ? 8 : 14)
 
       const valorQuebrado = pdf.splitTextToSize(card.valor, larguraCard - 8)
       pdf.text(valorQuebrado, x + 4, y + 18)
@@ -461,14 +491,17 @@ function Relatorios({ empresaAtiva }) {
       pdf.setFontSize(9)
       pdf.text('Pos.', margem + 3, y + 5.5)
       pdf.text('Produto', margem + 18, y + 5.5)
-      pdf.text('Quantidade', margem + larguraUtil - 3, y + 5.5, {
+      pdf.text('Qtd. saída', margem + larguraUtil - 42, y + 5.5, {
+        align: 'right',
+      })
+      pdf.text('Valor total', margem + larguraUtil - 3, y + 5.5, {
         align: 'right',
       })
       y += 8
 
       rankingProdutosVendidos.forEach((item, index) => {
         garantirEspaco(9)
-        const linhasProduto = pdf.splitTextToSize(item.produto, larguraUtil - 55)
+        const linhasProduto = pdf.splitTextToSize(item.produto, larguraUtil - 82)
         const alturaLinha = Math.max(8, linhasProduto.length * 4 + 3)
 
         pdf.setDrawColor(226, 232, 240)
@@ -482,9 +515,15 @@ function Relatorios({ empresaAtiva }) {
 
         pdf.setTextColor(15, 23, 42)
         pdf.setFont('helvetica', 'bold')
-        pdf.text(String(item.saidas), margem + larguraUtil - 3, y + 5.5, {
+        pdf.text(String(item.saidas), margem + larguraUtil - 42, y + 5.5, {
           align: 'right',
         })
+        pdf.text(
+          formatarMoeda(item.valorTotalVendido),
+          margem + larguraUtil - 3,
+          y + 5.5,
+          { align: 'right' }
+        )
 
         y += alturaLinha
       })
@@ -513,7 +552,7 @@ function Relatorios({ empresaAtiva }) {
 
         pdf.setFontSize(9)
         pdf.text(
-          `Total vendido: ${canal.total}`,
+          `Total: ${canal.total} | ${formatarMoeda(canal.valorTotal)}`,
           margem + larguraUtil - 4,
           y + 5.5,
           { align: 'right' }
@@ -530,7 +569,7 @@ function Relatorios({ empresaAtiva }) {
           garantirEspaco(8)
           const linhasProduto = pdf.splitTextToSize(
             produto.produto,
-            larguraUtil - 40
+            larguraUtil - 72
           )
           const alturaLinha = Math.max(7, linhasProduto.length * 4 + 2)
 
@@ -543,6 +582,12 @@ function Relatorios({ empresaAtiva }) {
           pdf.setFont('helvetica', 'bold')
           pdf.text(
             String(produto.quantidade),
+            margem + larguraUtil - 42,
+            y + 4.5,
+            { align: 'right' }
+          )
+          pdf.text(
+            formatarMoeda(produto.valorTotal),
             margem + larguraUtil - 4,
             y + 4.5,
             { align: 'right' }
@@ -658,6 +703,13 @@ function Relatorios({ empresaAtiva }) {
               </strong>
             </div>
           )}
+
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <p className="text-sm text-slate-500">Valor total vendido</p>
+            <strong className="mt-2 block text-2xl text-slate-900">
+              {carregandoRelatorio ? '...' : formatarMoeda(totalValorVendido)}
+            </strong>
+          </div>
 
           <div className="bg-white rounded-2xl shadow-sm p-5">
             <p className="text-sm text-slate-500">Produto mais vendido</p>
@@ -816,7 +868,7 @@ function Relatorios({ empresaAtiva }) {
               </h3>
 
               <p className="mt-1 text-sm text-slate-500">
-                Entradas, saídas e estoque atual no período selecionado.
+                Entradas, saídas, estoque atual e valor vendido no período selecionado.
               </p>
             </div>
 
@@ -834,6 +886,7 @@ function Relatorios({ empresaAtiva }) {
                         <th className="px-5 py-4">Categoria</th>
                         <th className="px-5 py-4">Entradas</th>
                         <th className="px-5 py-4">Saídas</th>
+                        <th className="px-5 py-4">Valor total</th>
                         <th className="px-5 py-4">Estoque atual</th>
                         <th className="px-5 py-4">Status</th>
                       </tr>
@@ -861,6 +914,10 @@ function Relatorios({ empresaAtiva }) {
                             {item.saidas}
                           </td>
 
+                          <td className="px-5 py-4 font-semibold text-slate-900">
+                            {formatarMoeda(item.valorTotalVendido)}
+                          </td>
+
                           <td className="px-5 py-4 text-slate-600">
                             {item.estoqueAtual}
                           </td>
@@ -874,7 +931,7 @@ function Relatorios({ empresaAtiva }) {
                       {relatorioPorProduto.length === 0 && (
                         <tr>
                           <td
-                            colSpan="6"
+                            colSpan="7"
                             className="px-5 py-8 text-center text-slate-500"
                           >
                             Nenhum produto encontrado no relatório.
@@ -905,7 +962,7 @@ function Relatorios({ empresaAtiva }) {
                         <StatusEstoque item={item} />
                       </div>
 
-                      <div className="mt-4 grid grid-cols-3 gap-3">
+                      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                         <div className="rounded-xl bg-slate-50 p-3">
                           <p className="text-xs text-slate-500">Entradas</p>
                           <p className="text-lg font-bold text-slate-900">
@@ -917,6 +974,13 @@ function Relatorios({ empresaAtiva }) {
                           <p className="text-xs text-slate-500">Saídas</p>
                           <p className="text-lg font-bold text-slate-900">
                             {item.saidas}
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Valor</p>
+                          <p className="text-sm font-bold text-slate-900">
+                            {formatarMoeda(item.valorTotalVendido)}
                           </p>
                         </div>
 

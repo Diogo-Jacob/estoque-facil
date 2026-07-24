@@ -65,6 +65,7 @@ function Dashboard({
       categoria: produto.categoria || 'Sem categoria',
       estoqueAtual: produto.estoque_atual,
       estoqueMinimo: produto.estoque_minimo,
+      valorUnitario: Number(produto.valor_unitario || 0),
       observacao: produto.observacao || '',
       ativo: produto.ativo,
       ordemExibicao: produto.ordem_exibicao ?? 9999,
