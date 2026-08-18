@@ -12,6 +12,7 @@ function Login({ onLogin }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState('')
   const [sucesso, setSucesso] = useState('')
+  const [mostrarSenha, setMostrarSenha] = useState(false)
 
   async function buscarEmpresasDoUsuario(usuarioId) {
     const { data, error } = await supabase
@@ -61,7 +62,8 @@ function Login({ onLogin }) {
     })
 
     if (error) {
-      setErro('E-mail ou senha inválidos.')
+      console.error('Erro ao fazer login:', error)
+      setErro('Não foi possível entrar. Confira o e-mail, a senha e se está acessando o link correto do sistema.')
       setCarregando(false)
       return
     }
@@ -279,13 +281,26 @@ function Login({ onLogin }) {
             <label className="block text-sm font-medium text-slate-700">
               Senha
             </label>
-            <input
-              type="password"
-              value={senha}
-              onChange={(event) => setSenha(event.target.value)}
-              placeholder="Digite sua senha"
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
+
+            <div className="relative mt-1">
+              <input
+                type={mostrarSenha ? 'text' : 'password'}
+                value={senha}
+                onChange={(event) => setSenha(event.target.value)}
+                placeholder="Digite sua senha"
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-14 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+
+              <button
+                type="button"
+                onClick={() => setMostrarSenha(!mostrarSenha)}
+                className="absolute inset-y-0 right-0 flex items-center px-4 text-lg text-slate-400 hover:text-slate-700"
+                aria-label={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                title={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+              >
+                {mostrarSenha ? '🙈' : '👁️'}
+              </button>
+            </div>
           </div>
 
           {modo === 'cadastro' && (
