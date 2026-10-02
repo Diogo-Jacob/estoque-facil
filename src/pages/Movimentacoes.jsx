@@ -49,7 +49,6 @@ function Movimentacoes({
   const canaisVendaSdPlasticos = [
     { valor: 'mercado_livre', nome: 'Mercado Livre' },
     { valor: 'zeca', nome: 'Zeca' },
-    { valor: 'venda_direta', nome: 'Venda direta' },
   ]
 
   const empresaEhDega = nomeEmpresaAtiva.includes('dega')
