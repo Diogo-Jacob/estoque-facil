@@ -370,29 +370,41 @@ function Relatorios({ empresaAtiva }) {
       },
     ]
 
-    const larguraCard = larguraUtil / 4 - 4
+    const larguraCard = larguraUtil / 2 - 3
+    const alturaCard = 28
+    const espacoEntreCards = 6
 
     cards.forEach((card, index) => {
-      const x = margem + index * (larguraCard + 6)
+      const coluna = index % 2
+      const linha = Math.floor(index / 2)
+      const x = margem + coluna * (larguraCard + espacoEntreCards)
+      const yCard = y + linha * (alturaCard + espacoEntreCards)
 
       pdf.setDrawColor(226, 232, 240)
       pdf.setFillColor(255, 255, 255)
-      pdf.roundedRect(x, y, larguraCard, 28, 3, 3, 'FD')
+      pdf.roundedRect(x, yCard, larguraCard, alturaCard, 3, 3, 'FD')
 
       pdf.setTextColor(71, 85, 105)
       pdf.setFont('helvetica', 'normal')
       pdf.setFontSize(9)
-      pdf.text(card.titulo, x + 4, y + 8)
+      pdf.text(card.titulo, x + 4, yCard + 8)
 
       pdf.setTextColor(15, 23, 42)
       pdf.setFont('helvetica', 'bold')
-      pdf.setFontSize(index === 2 ? 8 : 14)
+
+      if (card.titulo === 'Produto mais vendido') {
+        pdf.setFontSize(9)
+      } else if (card.titulo === 'Valor total vendido') {
+        pdf.setFontSize(13)
+      } else {
+        pdf.setFontSize(16)
+      }
 
       const valorQuebrado = pdf.splitTextToSize(card.valor, larguraCard - 8)
-      pdf.text(valorQuebrado, x + 4, y + 18)
+      pdf.text(valorQuebrado.slice(0, 2), x + 4, yCard + 18)
     })
 
-    y += 45
+    y += 75
 
     adicionarTituloSecao('Gráfico de Vendas')
 
@@ -678,7 +690,7 @@ function Relatorios({ empresaAtiva }) {
           className={
             gerandoPdf
               ? 'mt-6 grid grid-cols-3 gap-4'
-              : 'mt-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 print:grid-cols-3 print:gap-4'
+              : 'mt-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5 print:grid-cols-3 print:gap-4'
           }
         >
           <div className="bg-white rounded-2xl shadow-sm p-5">
@@ -706,7 +718,7 @@ function Relatorios({ empresaAtiva }) {
 
           <div className="bg-white rounded-2xl shadow-sm p-5">
             <p className="text-sm text-slate-500">Valor total vendido</p>
-            <strong className="mt-2 block text-2xl text-slate-900">
+            <strong className="mt-2 block whitespace-nowrap text-xl font-bold tracking-tight text-slate-900 xl:text-2xl">
               {carregandoRelatorio ? '...' : formatarMoeda(totalValorVendido)}
             </strong>
           </div>

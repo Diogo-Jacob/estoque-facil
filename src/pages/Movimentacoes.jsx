@@ -37,22 +37,44 @@ function Movimentacoes({
     observacao: '',
   })
 
-  const empresaUsaCanalVenda =
-    empresaAtiva?.usa_canal_venda === true ||
-    empresaAtiva?.usaCanalVenda === true ||
-    empresaAtiva?.nome?.toLowerCase().includes('dega')
+  const nomeEmpresaAtiva = empresaAtiva?.nome?.toLowerCase() || ''
 
-  const canaisVenda = [
+  const canaisVendaDega = [
     { valor: 'dega_moto_parts', nome: 'Dega Moto Parts' },
     { valor: 'emplajoi', nome: 'Emplajoi' },
     { valor: 'fecha_molde', nome: 'Fecha Molde' },
     { valor: 'shopee', nome: 'Shopee' },
   ]
 
+  const canaisVendaSdPlasticos = [
+    { valor: 'mercado_livre', nome: 'Mercado Livre' },
+    { valor: 'zeca', nome: 'Zeca' },
+    { valor: 'venda_direta', nome: 'Venda direta' },
+  ]
+
+  const empresaEhDega = nomeEmpresaAtiva.includes('dega')
+
+  const empresaEhSdPlasticos =
+    nomeEmpresaAtiva.includes('sd') ||
+    nomeEmpresaAtiva.includes('plásticos') ||
+    nomeEmpresaAtiva.includes('plasticos')
+
+  const empresaUsaCanalVenda =
+    empresaAtiva?.usa_canal_venda === true ||
+    empresaAtiva?.usaCanalVenda === true ||
+    empresaEhDega ||
+    empresaEhSdPlasticos
+
+  const canaisVenda = empresaEhSdPlasticos
+    ? canaisVendaSdPlasticos
+    : canaisVendaDega
+
+  const todosCanaisVenda = [...canaisVendaDega, ...canaisVendaSdPlasticos]
+
   function formatarCanalVenda(canal) {
     if (!canal) return 'Não informado'
 
-    const canalEncontrado = canaisVenda.find(
+    const canalEncontrado = todosCanaisVenda.find(
       (item) => item.valor === canal
     )
 
