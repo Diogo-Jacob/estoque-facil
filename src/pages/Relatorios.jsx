@@ -86,7 +86,7 @@ function Relatorios({ empresaAtiva }) {
         produto_id,
         quantidade,
         canal_venda,
-        produtos (
+        produtos!movimentacoes_produto_id_fkey (
           nome,
           valor_unitario
         )

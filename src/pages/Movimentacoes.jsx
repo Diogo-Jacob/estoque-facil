@@ -170,7 +170,7 @@ function Movimentacoes({
       .from('movimentacoes')
       .select(`
         *,
-        produtos (
+        produtos!movimentacoes_produto_id_fkey (
           nome
         )
       `)

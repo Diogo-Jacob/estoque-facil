@@ -83,7 +83,7 @@ function Dashboard({
       .from('movimentacoes')
       .select(`
         *,
-        produtos (
+        produtos!movimentacoes_produto_id_fkey (
           nome
         )
       `)
@@ -140,7 +140,7 @@ function Dashboard({
         id,
         produto_id,
         quantidade,
-        produtos (
+        produtos!movimentacoes_produto_id_fkey (
           nome
         )
       `)
