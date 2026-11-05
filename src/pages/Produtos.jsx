@@ -6,6 +6,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [produtoEditandoId, setProdutoEditandoId] = useState(null)
+  const [estoqueOriginalEdicao, setEstoqueOriginalEdicao] = useState(null)
   const [menuAbertoProdutoId, setMenuAbertoProdutoId] = useState(null)
 
   const [formProduto, setFormProduto] = useState({
@@ -62,11 +63,13 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
     })
 
     setProdutoEditandoId(null)
+    setEstoqueOriginalEdicao(null)
     setMostrarFormulario(false)
   }
 
   function abrirCadastro() {
     setProdutoEditandoId(null)
+    setEstoqueOriginalEdicao(null)
     setMenuAbertoProdutoId(null)
 
     setFormProduto({
@@ -85,6 +88,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
 
   function abrirEdicao(produto) {
     setProdutoEditandoId(produto.id)
+    setEstoqueOriginalEdicao(Number(produto.estoqueAtual))
     setMenuAbertoProdutoId(null)
 
     setFormProduto({
@@ -115,8 +119,8 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       return
     }
 
-    if (Number(formProduto.estoqueAtual || 0) < 0) {
-      alert('O estoque atual não pode ser negativo.')
+    if (!Number.isSafeInteger(Number(formProduto.estoqueAtual || 0)) || Number(formProduto.estoqueAtual || 0) < 0) {
+      alert('O estoque atual deve ser um número inteiro não negativo.')
       return
     }
 
@@ -132,31 +136,49 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
 
     setSalvando(true)
 
-    const produtoParaSalvar = {
-      empresa_id: empresaAtiva.id,
+    // Campos comuns: editar um produto não deve reenviar o saldo sem necessidade.
+    const dadosProduto = {
       nome: formProduto.nome.trim(),
       codigo: formProduto.codigo.trim() || null,
       categoria: formProduto.categoria.trim() || null,
-      estoque_atual: Number(formProduto.estoqueAtual || 0),
       estoque_minimo: Number(formProduto.estoqueMinimo || 0),
       valor_unitario: Number(formProduto.valorUnitario || 0),
       observacao: formProduto.observacao.trim() || null,
       em_producao: formProduto.emProducao,
-      ativo: true,
     }
 
     if (produtoEditandoId) {
-      const { data, error } = await supabase
+      const estoqueInformado = Number(formProduto.estoqueAtual || 0)
+      const alterouEstoque = estoqueInformado !== estoqueOriginalEdicao
+
+      const alteracoes = { ...dadosProduto }
+      if (alterouEstoque) {
+        alteracoes.estoque_atual = estoqueInformado
+      }
+
+      // Se houve ajuste manual, só grava se o saldo ainda for o mesmo
+      // daquele mostrado ao abrir a edição. Evita sobrescrever uma movimentação.
+      let consulta = supabase
         .from('produtos')
-        .update(produtoParaSalvar)
+        .update(alteracoes)
         .eq('id', produtoEditandoId)
         .eq('empresa_id', empresaAtiva.id)
-        .select()
-        .single()
+
+      if (alterouEstoque) {
+        consulta = consulta.eq('estoque_atual', estoqueOriginalEdicao)
+      }
+
+      const { data, error } = await consulta.select().maybeSingle()
 
       if (error) {
         console.error('Erro ao editar produto:', error)
         alert('Erro ao editar produto.')
+        setSalvando(false)
+        return
+      }
+
+      if (!data) {
+        alert('O estoque deste produto mudou desde que você abriu a edição. Nenhuma alteração foi salva. Atualize a página, confira o saldo e tente novamente.')
         setSalvando(false)
         return
       }
@@ -175,7 +197,12 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
 
     const { data, error } = await supabase
       .from('produtos')
-      .insert(produtoParaSalvar)
+      .insert({
+        ...dadosProduto,
+        empresa_id: empresaAtiva.id,
+        estoque_atual: Number(formProduto.estoqueAtual || 0),
+        ativo: true,
+      })
       .select()
       .single()
 
