@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../services/supabase'
 
 function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
@@ -9,6 +9,11 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   const [estoqueOriginalEdicao, setEstoqueOriginalEdicao] = useState(null)
   const [motivoAjuste, setMotivoAjuste] = useState('')
   const [menuAbertoProdutoId, setMenuAbertoProdutoId] = useState(null)
+  const [mostrarHistoricoAjustes, setMostrarHistoricoAjustes] = useState(false)
+  const [historicoAjustes, setHistoricoAjustes] = useState([])
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false)
+  const [erroHistorico, setErroHistorico] = useState('')
+  const historicoRequisicao = useRef(0)
 
   const [formProduto, setFormProduto] = useState({
     nome: '',
@@ -43,6 +48,49 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   const produtosEmProducao = produtosAtivos.filter(
     (produto) => produto.emProducao
   )
+
+  // Consultas apenas de leitura, sempre limitadas à empresa ativa.
+  async function carregarHistoricoAjustes(empresaId = empresaAtiva?.id) {
+    if (!empresaId) return
+
+    const requisicao = ++historicoRequisicao.current
+    setCarregandoHistorico(true)
+    setErroHistorico('')
+
+    const { data, error } = await supabase
+      .from('ajustes_estoque')
+      .select(`
+        id, produto_id, usuario_id, estoque_anterior, estoque_novo,
+        diferenca, motivo, criado_em,
+        produtos!ajustes_estoque_produto_empresa_fkey(nome),
+        usuarios!ajustes_estoque_usuario_fkey(nome)
+      `)
+      .eq('empresa_id', empresaId)
+      .order('criado_em', { ascending: false })
+      .limit(100)
+
+    if (requisicao !== historicoRequisicao.current) return
+
+    if (error) {
+      console.error('Erro ao carregar histórico de ajustes:', error)
+      setErroHistorico('Não foi possível carregar os ajustes. Tente novamente.')
+      setHistoricoAjustes([])
+    } else {
+      setHistoricoAjustes(data || [])
+    }
+    setCarregandoHistorico(false)
+  }
+
+  useEffect(() => {
+    // Invalida consultas anteriores e oculta dados ao trocar de empresa.
+    historicoRequisicao.current += 1
+    setHistoricoAjustes([])
+    setErroHistorico('')
+    setCarregandoHistorico(false)
+    if (mostrarHistoricoAjustes && empresaAtiva?.id) {
+      carregarHistoricoAjustes(empresaAtiva.id)
+    }
+  }, [empresaAtiva?.id, mostrarHistoricoAjustes])
 
   function atualizarCampo(campo, valor) {
     setFormProduto({
@@ -171,6 +219,11 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
           alert(erroAjuste.message || 'Não foi possível corrigir o estoque. Nenhuma alteração cadastral foi salva.')
           setSalvando(false)
           return
+        }
+
+        if (mostrarHistoricoAjustes) {
+          // Não bloqueia o salvamento enquanto o histórico é atualizado.
+          void carregarHistoricoAjustes()
         }
 
         // Evita repetir um ajuste já concluído caso a edição cadastral falhe.
@@ -799,6 +852,90 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
             </p>
           )}
         </div>
+      </div>
+
+      <div className="mt-6 overflow-hidden rounded-2xl bg-white shadow-sm">
+        <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-xl font-bold text-slate-900">Histórico de ajustes de estoque</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Correções manuais, separadas das entradas e saídas do relatório.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            {mostrarHistoricoAjustes && (
+              <button
+                type="button"
+                onClick={() => carregarHistoricoAjustes()}
+                disabled={carregandoHistorico || !empresaAtiva?.id}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Atualizar
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setMostrarHistoricoAjustes((anterior) => !anterior)}
+              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+            >
+              {mostrarHistoricoAjustes ? 'Ocultar histórico' : 'Ver histórico'}
+            </button>
+          </div>
+        </div>
+
+        {mostrarHistoricoAjustes && (
+          <div className="border-t border-slate-100">
+            {carregandoHistorico ? (
+              <p className="p-6 text-sm text-slate-500">Carregando ajustes...</p>
+            ) : erroHistorico ? (
+              <p role="alert" className="p-6 text-sm text-red-600">{erroHistorico}</p>
+            ) : historicoAjustes.length === 0 ? (
+              <p className="p-6 text-sm text-slate-500">
+                Nenhuma correção manual registrada para esta empresa.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[850px] text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-4 py-3">Data</th>
+                      <th className="px-4 py-3">Produto</th>
+                      <th className="px-4 py-3">Anterior</th>
+                      <th className="px-4 py-3">Novo</th>
+                      <th className="px-4 py-3">Diferença</th>
+                      <th className="px-4 py-3">Responsável</th>
+                      <th className="px-4 py-3">Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historicoAjustes.map((ajuste) => (
+                      <tr key={ajuste.id} className="border-t border-slate-100">
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                          {new Date(ajuste.criado_em).toLocaleString('pt-BR')}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-900">
+                          {ajuste.produtos?.nome || 'Produto indisponível'}
+                        </td>
+                        <td className="px-4 py-3">{ajuste.estoque_anterior}</td>
+                        <td className="px-4 py-3">{ajuste.estoque_novo}</td>
+                        <td className={`px-4 py-3 font-semibold ${ajuste.diferenca > 0 ? 'text-green-700' : 'text-red-600'}`}>
+                          {ajuste.diferenca > 0 ? '+' : ''}{ajuste.diferenca}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {ajuste.usuarios?.nome || 'Usuário indisponível'}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{ajuste.motivo || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="px-4 py-3 text-xs text-slate-400">
+                  Exibindo até 100 ajustes mais recentes da empresa selecionada.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   )
