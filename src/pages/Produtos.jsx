@@ -7,6 +7,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   const [salvando, setSalvando] = useState(false)
   const [produtoEditandoId, setProdutoEditandoId] = useState(null)
   const [estoqueOriginalEdicao, setEstoqueOriginalEdicao] = useState(null)
+  const [motivoAjuste, setMotivoAjuste] = useState('')
   const [menuAbertoProdutoId, setMenuAbertoProdutoId] = useState(null)
 
   const [formProduto, setFormProduto] = useState({
@@ -64,12 +65,14 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
 
     setProdutoEditandoId(null)
     setEstoqueOriginalEdicao(null)
+    setMotivoAjuste('')
     setMostrarFormulario(false)
   }
 
   function abrirCadastro() {
     setProdutoEditandoId(null)
     setEstoqueOriginalEdicao(null)
+    setMotivoAjuste('')
     setMenuAbertoProdutoId(null)
 
     setFormProduto({
@@ -89,6 +92,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   function abrirEdicao(produto) {
     setProdutoEditandoId(produto.id)
     setEstoqueOriginalEdicao(Number(produto.estoqueAtual))
+    setMotivoAjuste('')
     setMenuAbertoProdutoId(null)
 
     setFormProduto({
@@ -151,45 +155,76 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       const estoqueInformado = Number(formProduto.estoqueAtual || 0)
       const alterouEstoque = estoqueInformado !== estoqueOriginalEdicao
 
-      const alteracoes = { ...dadosProduto }
       if (alterouEstoque) {
-        alteracoes.estoque_atual = estoqueInformado
+        // O ajuste é atômico no banco: altera o saldo e grava o histórico juntos.
+        // A comparação com o saldo anterior ocorre sob bloqueio do produto.
+        const { error: erroAjuste } = await supabase.rpc('ajustar_estoque_manual', {
+          p_empresa_id: empresaAtiva.id,
+          p_produto_id: produtoEditandoId,
+          p_estoque_esperado: estoqueOriginalEdicao,
+          p_estoque_novo: estoqueInformado,
+          p_motivo: motivoAjuste.trim() || null,
+        })
+
+        if (erroAjuste) {
+          console.error('Erro ao ajustar estoque:', erroAjuste)
+          alert(erroAjuste.message || 'Não foi possível corrigir o estoque. Nenhuma alteração cadastral foi salva.')
+          setSalvando(false)
+          return
+        }
+
+        // Evita repetir um ajuste já concluído caso a edição cadastral falhe.
+        setEstoqueOriginalEdicao(estoqueInformado)
+        setMotivoAjuste('')
       }
 
-      // Se houve ajuste manual, só grava se o saldo ainda for o mesmo
-      // daquele mostrado ao abrir a edição. Evita sobrescrever uma movimentação.
-      let consulta = supabase
+      // Atualização cadastral separada: jamais reenvia estoque_atual.
+      const { data, error } = await supabase
         .from('produtos')
-        .update(alteracoes)
+        .update(dadosProduto)
         .eq('id', produtoEditandoId)
         .eq('empresa_id', empresaAtiva.id)
+        .select()
+        .maybeSingle()
 
-      if (alterouEstoque) {
-        consulta = consulta.eq('estoque_atual', estoqueOriginalEdicao)
-      }
+      if (error || !data) {
+        console.error('Erro ao editar dados do produto:', error)
 
-      const { data, error } = await consulta.select().maybeSingle()
+        if (alterouEstoque) {
+          // O ajuste já aconteceu; atualiza o formulário com o saldo efetivo.
+          const { data: produtoAtual } = await supabase
+            .from('produtos')
+            .select('*')
+            .eq('id', produtoEditandoId)
+            .eq('empresa_id', empresaAtiva.id)
+            .maybeSingle()
 
-      if (error) {
-        console.error('Erro ao editar produto:', error)
-        alert('Erro ao editar produto.')
-        setSalvando(false)
-        return
-      }
-
-      if (!data) {
-        alert('O estoque deste produto mudou desde que você abriu a edição. Nenhuma alteração foi salva. Atualize a página, confira o saldo e tente novamente.')
+          if (produtoAtual) {
+            setEstoqueOriginalEdicao(Number(produtoAtual.estoque_atual))
+            setFormProduto((anterior) => ({
+              ...anterior,
+              estoqueAtual: produtoAtual.estoque_atual,
+            }))
+            setProdutos((anteriores) =>
+              anteriores.map((produto) =>
+                produto.id === produtoEditandoId ? formatarProduto(produtoAtual) : produto
+              )
+            )
+          }
+          alert('O ajuste de estoque foi realizado e registrado, mas não foi possível salvar os demais dados. Atualize a página e confira o produto antes de tentar novamente.')
+        } else {
+          alert('Não foi possível salvar os dados do produto. Nenhuma correção de estoque foi feita.')
+        }
         setSalvando(false)
         return
       }
 
       const produtoFormatado = formatarProduto(data)
-
-      const produtosAtualizados = produtos.map((produto) =>
-        produto.id === produtoEditandoId ? produtoFormatado : produto
+      setProdutos((anteriores) =>
+        anteriores.map((produto) =>
+          produto.id === produtoEditandoId ? produtoFormatado : produto
+        )
       )
-
-      setProdutos(produtosAtualizados)
       setSalvando(false)
       limparFormulario()
       return
@@ -409,9 +444,32 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
                   atualizarCampo('estoqueAtual', event.target.value)
                 }
                 placeholder="Ex: 100"
+                min="0"
+                step="1"
                 className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
+              {produtoEditandoId && Number(formProduto.estoqueAtual || 0) !== estoqueOriginalEdicao && (
+                <p className="mt-2 text-xs text-amber-700">
+                  A alteração do saldo será registrada no histórico de ajustes, sem entrar nas entradas e saídas dos relatórios.
+                </p>
+              )}
             </div>
+
+            {produtoEditandoId && Number(formProduto.estoqueAtual || 0) !== estoqueOriginalEdicao && (
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  Motivo da correção de estoque (opcional)
+                </label>
+                <input
+                  type="text"
+                  maxLength={500}
+                  value={motivoAjuste}
+                  onChange={(event) => setMotivoAjuste(event.target.value)}
+                  placeholder="Ex: divergência na contagem física"
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-slate-700">
