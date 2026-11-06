@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
 
 function Movimentacoes({
@@ -25,6 +25,7 @@ function Movimentacoes({
   const [dataFinal, setDataFinal] = useState('')
 
   const [historicoCompleto, setHistoricoCompleto] = useState([])
+  const [precosHistoricoRecente, setPrecosHistoricoRecente] = useState({})
   const [carregandoHistoricoCompleto, setCarregandoHistoricoCompleto] =
     useState(false)
   const [historicoBuscado, setHistoricoBuscado] = useState(false)
@@ -100,6 +101,39 @@ function Movimentacoes({
   })
 
   const movimentacoesRecentes = movimentacoes.slice(0, 10)
+  const idsRecentes = movimentacoesRecentes.map((item) => item.id).filter(Boolean).join(',')
+
+  // As movimentações recentes são recebidas do componente pai, que pode não
+  // incluir valor_unitario. Consultamos apenas o preço das linhas visíveis.
+  useEffect(() => {
+    let ativo = true
+    setPrecosHistoricoRecente({})
+
+    if (!empresaEhSdPlasticos || !empresaAtiva?.id || !idsRecentes) {
+      return () => { ativo = false }
+    }
+
+    async function carregarPrecosRecentes() {
+      const { data, error } = await supabase
+        .from('movimentacoes')
+        .select('id, valor_unitario')
+        .eq('empresa_id', empresaAtiva.id)
+        .in('id', idsRecentes.split(','))
+
+      if (!ativo) return
+      if (error) {
+        console.error('Erro ao consultar preços do histórico recente:', error)
+        return
+      }
+
+      setPrecosHistoricoRecente(
+        Object.fromEntries((data || []).map((item) => [item.id, item.valor_unitario]))
+      )
+    }
+
+    carregarPrecosRecentes()
+    return () => { ativo = false }
+  }, [empresaAtiva?.id, empresaEhSdPlasticos, idsRecentes])
 
   const produtoSelecionado = produtos.find(
     (produto) => produto.id === novaMovimentacao.produtoId
@@ -113,6 +147,9 @@ function Movimentacoes({
   const mostrarPreco = empresaEhSdPlasticos && novaMovimentacao.tipo === 'saida'
   const formatarNumero = (numero) => Number(numero || 0).toLocaleString('pt-BR')
   const formatarMoeda = (numero) => Number(numero || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  // O preço por unidade pode ter até seis casas decimais (ex.: R$ 0,003).
+  // O valor total continua sendo exibido com duas casas decimais.
+  const formatarPrecoUnitario = (numero) => `R$ ${Number(numero || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`
   function dataLegivel(data) {
     if (!data) return '—'
     const [ano, mes, dia] = data.split('-')
@@ -298,8 +335,11 @@ function Movimentacoes({
       alert('Informe uma quantidade inteira de unidades.')
       return
     }
-    if (mostrarPreco && (!Number.isFinite(precoEfetivo) || precoEfetivo < 0 || Math.round(precoEfetivo * 100) / 100 !== precoEfetivo)) {
-      alert('Informe um preço unitário válido com até duas casas decimais.')
+    // Preserva os preços fracionários dos produtos industriais.
+    // Rejeita valores negativos, texto inválido e mais de seis casas decimais.
+    const precoInformadoValido = precoDigitado === '' || /^(?:\d+(?:[.,]\d{1,6})?|[.,]\d{1,6})$/.test(precoDigitado)
+    if (mostrarPreco && (!precoInformadoValido || !Number.isFinite(precoEfetivo) || precoEfetivo < 0)) {
+      alert('Informe um preço unitário válido com até seis casas decimais.')
       return
     }
     setSalvando(true)
@@ -440,13 +480,57 @@ function Movimentacoes({
   }
 
   function HistoricoTabela() {
-    return <div className="overflow-x-auto"><table className="w-full min-w-[760px] border-collapse text-left text-sm"><thead className="border-y border-slate-100 bg-slate-50/80"><tr className="text-[10px] uppercase tracking-wider text-slate-400"><th className="px-5 py-3">Movimentação</th><th className="px-5 py-3">Produto</th><th className="px-5 py-3">Tipo</th><th className="px-5 py-3">Quantidade</th>{empresaUsaCanalVenda && <th className="px-5 py-3">Canal</th>}<th className="px-5 py-3">Observação</th><th className="px-5 py-3">Ações</th></tr></thead><tbody>{listaPagina.map((movimentacao) => <tr key={movimentacao.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70"><td className="px-5 py-3"><p className="font-semibold text-slate-800">#{String(movimentacao.id).slice(0, 8).toUpperCase()}</p><p className="mt-1 text-[11px] text-slate-400">{dataLegivel(movimentacao.data)}</p></td><td className="px-5 py-3 font-medium text-slate-700">{movimentacao.produtoNome}</td><td className="px-5 py-3"><BadgeTipo tipo={movimentacao.tipo}/></td><td className="px-5 py-3 font-medium text-slate-700">{formatarNumero(movimentacao.quantidade)} un.</td>{empresaUsaCanalVenda && <td className="px-5 py-3 text-slate-600">{movimentacao.tipo === 'saida' ? formatarCanalVenda(movimentacao.canalVenda) : '—'}</td>}<td className="max-w-[220px] truncate px-5 py-3 text-slate-500" title={movimentacao.observacao || ''}>{movimentacao.observacao || '—'}</td><td className="px-5 py-3"><BotaoEstorno movimentacao={movimentacao}/></td></tr>)}</tbody></table>{listaPagina.length === 0 && <p className="p-8 text-center text-sm text-slate-500">Nenhuma movimentação encontrada.</p>}</div>
+    return (
+      <div className="overflow-x-auto">
+        <table className={`w-full ${empresaEhSdPlasticos ? 'min-w-[900px]' : 'min-w-[720px]'} border-collapse text-left text-sm`}>
+          <thead className="border-y border-slate-100 bg-slate-50/80">
+            <tr className="text-[10px] uppercase tracking-wider text-slate-400">
+              <th className="px-5 py-3">Data</th>
+              <th className="px-5 py-3">Produto</th>
+              <th className="px-5 py-3">Tipo</th>
+              <th className="px-5 py-3">Quantidade</th>
+              {empresaUsaCanalVenda && <th className="px-5 py-3">Canal</th>}
+              {empresaEhSdPlasticos && <th className="px-5 py-3">Valor unitário</th>}
+              <th className="px-5 py-3">Observação</th>
+              <th className="px-5 py-3">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {listaPagina.map((movimentacao) => {
+              // Algumas linhas recentes vêm das props da página; as da busca vêm do Supabase.
+              const valorRegistrado = movimentacao.valorUnitario ?? movimentacao.valor_unitario ?? precosHistoricoRecente[movimentacao.id]
+              const temValor = movimentacao.tipo === 'saida' && valorRegistrado !== null && valorRegistrado !== undefined && valorRegistrado !== '' && Number.isFinite(Number(valorRegistrado))
+              return (
+                <tr key={movimentacao.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
+                  <td className="whitespace-nowrap px-5 py-3 text-slate-600">{dataLegivel(movimentacao.data ?? movimentacao.data_movimentacao)}</td>
+                  <td className="px-5 py-3 font-medium text-slate-700">{movimentacao.produtoNome}</td>
+                  <td className="px-5 py-3"><BadgeTipo tipo={movimentacao.tipo}/></td>
+                  <td className="whitespace-nowrap px-5 py-3 font-medium text-slate-700">{formatarNumero(movimentacao.quantidade)} un.</td>
+                  {empresaUsaCanalVenda && (
+                    <td className="px-5 py-3 text-slate-600">{movimentacao.tipo === 'saida' ? formatarCanalVenda(movimentacao.canalVenda) : '—'}</td>
+                  )}
+                  {empresaEhSdPlasticos && (
+                    <td className="whitespace-nowrap px-5 py-3 font-semibold text-slate-700" title={!temValor && movimentacao.tipo === 'saida' ? 'Preço histórico não registrado' : undefined}>
+                      {temValor ? formatarPrecoUnitario(valorRegistrado) : '—'}
+                    </td>
+                  )}
+                  <td className="max-w-[220px] truncate px-5 py-3 text-slate-500" title={movimentacao.observacao || ''}>{movimentacao.observacao || '—'}</td>
+                  <td className="px-5 py-3"><BotaoEstorno movimentacao={movimentacao}/></td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        {listaPagina.length === 0 && <p className="p-8 text-center text-sm text-slate-500">Nenhuma movimentação encontrada.</p>}
+      </div>
+    )
   }
 
   return <section className="w-full min-w-0 space-y-5 pb-8">
     <header className="min-w-0 pb-1">
+      <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.24em] text-blue-600">Controle de estoque</p>
       <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Movimentações</h1>
-      <p className="mt-1 max-w-full break-words text-sm leading-relaxed text-slate-500">Registre entradas e saídas.</p>
+      <p className="mt-1 max-w-full break-words text-sm leading-relaxed text-slate-500">Registre entradas e saídas com conferência automática de saldo.</p>
     </header>
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.85fr)_minmax(285px,1fr)] lg:items-stretch">
       {/* O resumo aparece acima do formulário no celular. */}
@@ -455,7 +539,7 @@ function Movimentacoes({
         {produtoSelecionado ? <>
           <div className="mt-5 flex items-center gap-3 border-b border-slate-100 pb-5"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><Icone nome="caixa" size={24}/></div><div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-wide text-blue-600">{produtoSelecionado.codigo || 'Produto'}</p><p className="truncate text-sm font-bold text-slate-900">{produtoSelecionado.nome}</p><p className="text-xs text-slate-400">{produtoSelecionado.categoria || 'Estoque'}</p></div></div>
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-slate-100 py-5"><div className="text-center"><p className="text-[11px] text-slate-400">Estoque atual</p><p className="mt-2 text-xl font-extrabold text-slate-900 lg:text-2xl">{formatarNumero(produtoSelecionado.estoqueAtual)}</p><p className="text-[11px] text-slate-400">unidades</p></div><Icone nome="seta" size={20} className="text-slate-400"/><div className={`rounded-xl px-2 py-4 text-center ${estoqueAposMovimentacao < 0 ? 'bg-red-50' : 'bg-emerald-50'}`}><p className="text-[11px] text-slate-500">Estoque previsto</p><p className={`mt-2 text-xl font-extrabold lg:text-2xl ${estoqueAposMovimentacao < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{formatarNumero(quantidadeInformada > 0 ? estoqueAposMovimentacao : produtoSelecionado.estoqueAtual)}</p><p className="text-[11px] text-slate-400">unidades</p></div></div>
-          <div className="space-y-3 py-5 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Quantidade</span><strong className="text-slate-800">{formatarNumero(quantidadeInformada)} un.</strong></div>{mostrarPreco && <><div className="flex justify-between gap-3"><span className="text-slate-500">Valor unitário efetivo</span><strong className="text-slate-800">{formatarMoeda(precoEfetivo)}</strong></div><div className="flex justify-between gap-3 border-t border-slate-100 pt-3"><span className="text-slate-500">Valor total</span><strong className="text-lg text-blue-600">{formatarMoeda(valorTotal)}</strong></div></>}</div>
+          <div className="space-y-3 py-5 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Quantidade</span><strong className="text-slate-800">{formatarNumero(quantidadeInformada)} un.</strong></div>{mostrarPreco && <><div className="flex justify-between gap-3"><span className="text-slate-500">Valor unitário efetivo</span><strong className="text-slate-800">{formatarPrecoUnitario(precoEfetivo)}</strong></div><div className="flex justify-between gap-3 border-t border-slate-100 pt-3"><span className="text-slate-500">Valor total</span><strong className="text-lg text-blue-600">{formatarMoeda(valorTotal)}</strong></div></>}</div>
           {mostrarPreco && <div className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-500"><Icone nome="escudo" size={18} className="shrink-0 text-blue-600"/>O preço personalizado vale somente para esta saída e não altera o cadastro do produto.</div>}
           {ficaraAbaixoDoMinimo && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-medium text-amber-800">Atenção: a saída deixará o estoque abaixo do mínimo cadastrado.</p>}
         </> : <div className="mt-5 flex items-center gap-3 rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500"><Icone nome="caixa" size={24} className="shrink-0 text-blue-500"/>Selecione um produto para visualizar o estoque atual e a previsão da operação.</div>}
@@ -469,7 +553,7 @@ function Movimentacoes({
         <form onSubmit={(event) => { event.preventDefault(); if (!salvando) salvarMovimentacao() }} className="mt-5 space-y-4">
           <div><label className={rotulo}>Produto</label><div className="relative"><div className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="caixa" size={18}/></div><input type="text" autoComplete="off" value={buscaProdutoMovimentacao} onChange={event => {setBuscaProdutoMovimentacao(event.target.value); atualizarCampo('produtoId',''); setMostrarSugestoesProduto(true)}} onFocus={()=>setMostrarSugestoesProduto(true)} placeholder="Selecione ou busque um produto" className={`${campo} pl-10 pr-10`}/><div className="pointer-events-none absolute right-3 top-[22px] text-slate-400"><Icone nome="chevron" size={17}/></div>{mostrarSugestoesProduto && <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">{produtosFiltradosMovimentacao.length ? produtosFiltradosMovimentacao.map(produto=><button type="button" key={produto.id} onClick={()=>selecionarProduto(produto)} className="w-full border-b border-slate-100 p-3 text-left last:border-0 hover:bg-blue-50"><p className="text-sm font-semibold text-slate-800">{produto.nome}</p><p className="text-xs text-slate-400">{produto.codigo || ''} · Estoque: {formatarNumero(produto.estoqueAtual)}</p></button>) : <p className="p-4 text-sm text-slate-500">Nenhum produto encontrado.</p>}</div>}</div></div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label className={rotulo}>Quantidade</label><div className="relative"><input type="number" min="1" step="1" required value={novaMovimentacao.quantidade} onChange={event=>atualizarCampo('quantidade',event.target.value)} placeholder="0" className={`${campo} pr-12`}/><span className="pointer-events-none absolute right-4 top-[22px] text-xs text-slate-400">un.</span></div></div><div><label className={rotulo}>Data da movimentação</label><input type="date" required value={novaMovimentacao.data} onChange={event=>atualizarCampo('data',event.target.value)} className={campo}/></div></div>
-          {novaMovimentacao.tipo === 'saida' && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{empresaUsaCanalVenda && <div><label className={rotulo}>Canal de venda</label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="carrinho" size={16}/></span><select value={novaMovimentacao.canalVenda} onChange={event=>atualizarCampo('canalVenda',event.target.value)} className={`${campo} pl-9`}><option value="">Sem canal</option>{canaisVenda.map(canal=><option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}</select></div></div>}{empresaEhSdPlasticos && <div><label className={rotulo}>Valor unitário personalizado <span className="font-normal text-slate-400">Opcional</span></label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-xs text-slate-400">R$</span><input type="text" inputMode="decimal" value={novaMovimentacao.valorUnitario} onChange={event=>atualizarCampo('valorUnitario',event.target.value)} placeholder={precoPadrao.toFixed(2).replace('.',',')} className={`${campo} pl-10`}/></div><p className="mt-1 text-[11px] text-slate-400">Vazio utiliza o preço padrão de {formatarMoeda(precoPadrao)}</p></div>}</div>}
+          {novaMovimentacao.tipo === 'saida' && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{empresaUsaCanalVenda && <div><label className={rotulo}>Canal de venda</label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="carrinho" size={16}/></span><select value={novaMovimentacao.canalVenda} onChange={event=>atualizarCampo('canalVenda',event.target.value)} className={`${campo} pl-9`}><option value="">Sem canal</option>{canaisVenda.map(canal=><option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}</select></div></div>}{empresaEhSdPlasticos && <div><label className={rotulo}>Valor unitário personalizado <span className="font-normal text-slate-400">Opcional</span></label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-xs text-slate-400">R$</span><input type="text" inputMode="decimal" value={novaMovimentacao.valorUnitario} onChange={event=>atualizarCampo('valorUnitario',event.target.value)} placeholder={precoPadrao.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 })} className={`${campo} pl-10`}/></div><p className="mt-1 text-[11px] text-slate-400">Vazio utiliza o preço padrão de {formatarPrecoUnitario(precoPadrao)}</p></div>}</div>}
           <div><label className={rotulo}>Observação <span className="font-normal text-slate-400">Opcional</span></label><textarea rows={3} value={novaMovimentacao.observacao} onChange={event=>atualizarCampo('observacao',event.target.value)} placeholder="Adicione informações relevantes para esta movimentação..." className={`${campo} resize-y`}/></div>
           {saidaMaiorQueEstoque && <p className="rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-700">A quantidade informada supera o estoque disponível.</p>}
           <button type="submit" disabled={salvando || saidaMaiorQueEstoque} className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-blue-100 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><Icone nome="check" size={18}/>{salvando ? 'Salvando…' : `Confirmar ${novaMovimentacao.tipo}`}</button>

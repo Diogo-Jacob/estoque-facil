@@ -140,6 +140,7 @@ function Relatorios({ empresaAtiva }) {
           produto_id,
           quantidade,
           canal_venda,
+          valor_unitario,
           produtos!movimentacoes_produto_id_fkey (
             nome,
             valor_unitario
@@ -189,10 +190,11 @@ function Relatorios({ empresaAtiva }) {
         produtoId: venda.produto_id,
         produto: venda.produtos?.nome || 'Produto não encontrado',
         quantidade: Number(venda.quantidade || 0),
-        valorUnitario: Number(venda.produtos?.valor_unitario || 0),
-        valorTotal:
-          Number(venda.quantidade || 0) *
-          Number(venda.produtos?.valor_unitario || 0),
+        // Preço histórico real tem prioridade. NULL representa saída antiga sem preço registrado.
+        precoRegistrado: venda.valor_unitario !== null && venda.valor_unitario !== undefined,
+        valorUnitario: Number(venda.valor_unitario ?? venda.produtos?.valor_unitario ?? 0),
+        valorTotal: Number(venda.quantidade || 0) *
+          Number(venda.valor_unitario ?? venda.produtos?.valor_unitario ?? 0),
         canalVenda: venda.canal_venda || '',
       }))
 
@@ -248,10 +250,21 @@ function Relatorios({ empresaAtiva }) {
     0
   )
 
-  const totalValorVendido = relatorioPorProduto.reduce(
-    (total, item) => total + item.valorTotalVendido,
-    0
-  )
+  // Valores são calculados a partir das saídas originais não estornadas.
+  // As novas saídas possuem preço histórico real; antigas usam preço atual apenas como estimativa.
+  const vendasComPreco = vendasDetalhadas.filter((venda) => venda.precoRegistrado)
+  const vendasSemPreco = vendasDetalhadas.filter((venda) => !venda.precoRegistrado)
+  const valorConfirmado = vendasComPreco.reduce((total, venda) => total + venda.valorTotal, 0)
+  const valorEstimado = vendasSemPreco.reduce((total, venda) => total + venda.valorTotal, 0)
+  const totalValorVendido = valorConfirmado + valorEstimado
+  const temEstimativas = vendasSemPreco.length > 0
+
+  const valoresPorProduto = vendasDetalhadas.reduce((valores, venda) => {
+    const anterior = valores[venda.produtoId] || { confirmado: 0, estimado: 0 }
+    anterior[venda.precoRegistrado ? 'confirmado' : 'estimado'] += venda.valorTotal
+    valores[venda.produtoId] = anterior
+    return valores
+  }, {})
 
   const produtosComEstoqueBaixo = relatorioPorProduto.filter(
     (item) => item.estoqueAtual < item.estoqueMinimo
@@ -286,6 +299,11 @@ function Relatorios({ empresaAtiva }) {
 
   const rankingProdutosVendidos = relatorioPorProduto
     .filter((item) => item.saidas > 0)
+    .map((item) => ({
+      ...item,
+      valorTotalVendido: (valoresPorProduto[item.produtoId]?.confirmado || 0) +
+        (valoresPorProduto[item.produtoId]?.estimado || 0),
+    }))
     .sort((a, b) => b.saidas - a.saidas)
 
   const rankingCanaisVenda = Object.values(
@@ -299,6 +317,9 @@ function Relatorios({ empresaAtiva }) {
           total: 0,
           movimentacoes: 0,
           valorTotal: 0,
+          valorConfirmado: 0,
+          valorEstimado: 0,
+          quantidadeSemPreco: 0,
           produtos: {},
         }
       }
@@ -306,6 +327,8 @@ function Relatorios({ empresaAtiva }) {
       ranking[chaveCanal].total += venda.quantidade
       ranking[chaveCanal].movimentacoes += 1
       ranking[chaveCanal].valorTotal += venda.valorTotal
+      ranking[chaveCanal][venda.precoRegistrado ? 'valorConfirmado' : 'valorEstimado'] += venda.valorTotal
+      if (!venda.precoRegistrado) ranking[chaveCanal].quantidadeSemPreco += 1
 
       if (!ranking[chaveCanal].produtos[venda.produtoId]) {
         ranking[chaveCanal].produtos[venda.produtoId] = {
@@ -475,7 +498,7 @@ function Relatorios({ empresaAtiva }) {
             : 'Sem vendas',
       },
       ...(!empresaEhDega ? [{
-        titulo: 'Valor total vendido',
+        titulo: temEstimativas ? 'Valor misto (com estimativas)' : 'Valor histórico vendido',
         valor: formatarMoeda(totalValorVendido),
       }] : []),
     ]
@@ -504,7 +527,7 @@ function Relatorios({ empresaAtiva }) {
 
       if (card.titulo === 'Produto mais vendido') {
         pdf.setFontSize(9)
-      } else if (card.titulo === 'Valor total vendido') {
+      } else if (card.titulo.startsWith('Valor ')) {
         pdf.setFontSize(13)
       } else {
         pdf.setFontSize(16)
@@ -708,6 +731,16 @@ function Relatorios({ empresaAtiva }) {
       })
     }
 
+    if (!empresaEhDega) {
+      garantirEspaco(22)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(9)
+      pdf.setTextColor(71, 85, 105)
+      pdf.text(`Valores com preco historico: ${formatarMoeda(valorConfirmado)} (${vendasComPreco.length} saidas)`, margem, y + 4)
+      pdf.text(`Valores estimados (preco atual): ${formatarMoeda(valorEstimado)} (${vendasSemPreco.length} saidas)`, margem, y + 10)
+      if (temEstimativas) pdf.text('Estimativas nao representam faturamento historico confirmado.', margem, y + 16)
+    }
+
     return pdf
   }
 
@@ -746,7 +779,7 @@ function Relatorios({ empresaAtiva }) {
     { titulo: 'Total de entradas', valor: formatarQuantidade(totalEntradas), detalhe: 'unidades no período', icone: 'entrada', cor: 'text-blue-600 bg-blue-50' },
     { titulo: 'Total de saídas', valor: formatarQuantidade(totalSaidas), detalhe: 'unidades no período', icone: 'saida', cor: 'text-rose-500 bg-rose-50' },
     { titulo: 'Saldo líquido', valor: `${totalEntradas - totalSaidas >= 0 ? '+' : ''}${formatarQuantidade(totalEntradas - totalSaidas)}`, detalhe: 'entradas menos saídas', icone: 'saldo', cor: 'text-emerald-600 bg-emerald-50' },
-    ...(!empresaEhDega ? [{ titulo: 'Valor estimado das saídas', valor: formatarMoeda(totalValorVendido), detalhe: 'preços atuais dos produtos', icone: 'financeiro', cor: 'text-violet-600 bg-violet-50' }] : [
+    ...(!empresaEhDega ? [{ titulo: temEstimativas ? 'Valor total (misto)' : 'Valor histórico das saídas', valor: formatarMoeda(totalValorVendido), detalhe: temEstimativas ? `${vendasSemPreco.length} saída(s) estimada(s) • ${vendasComPreco.length} com preço real` : 'preços registrados nas saídas', icone: 'financeiro', cor: 'text-violet-600 bg-violet-50' }] : [
       { titulo: 'Produtos com estoque baixo', valor: formatarQuantidade(produtosComEstoqueBaixo.length), detalhe: 'dos produtos encontrados', icone: 'alerta', cor: 'text-amber-600 bg-amber-50' },
     ]),
   ]
@@ -755,6 +788,7 @@ function Relatorios({ empresaAtiva }) {
     <section className="min-w-0 bg-transparent pb-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
+          <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.24em] text-blue-600">Análise e inteligência</p>
           <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">Relatórios</h2>
           <p className="mt-1 max-w-full break-words text-sm leading-relaxed text-slate-500">Dados consolidados da {empresaAtiva?.nome || 'empresa'} para decisões mais seguras.</p>
         </div>
@@ -956,7 +990,7 @@ function Relatorios({ empresaAtiva }) {
                   <th className="px-6 py-4">Canal</th>
                   <th className="px-5 py-4 text-right">Movimentações</th>
                   <th className="px-5 py-4 text-right">Unidades</th>
-                  {!empresaEhDega && <th className="px-5 py-4 text-right">Valor estimado</th>}
+                  {!empresaEhDega && <th className="px-5 py-4 text-right">Valor total*</th>}
                   <th className="px-6 py-4 text-right">Participação</th>
                 </tr>
               </thead>
@@ -993,7 +1027,13 @@ function Relatorios({ empresaAtiva }) {
               )}
             </table>
           </div>
-          {!empresaEhDega && <p className="border-t border-slate-100 px-6 py-3 text-xs text-slate-500">Valor estimado com base nos preços unitários atuais dos produtos. Não representa necessariamente o faturamento histórico.</p>}
+          {!empresaEhDega && (
+            <div className="border-t border-slate-100 px-6 py-3 text-xs text-slate-500 space-y-1">
+              <p><strong className="text-slate-700">Valores com preço histórico:</strong> {formatarMoeda(valorConfirmado)} ({vendasComPreco.length} saídas).</p>
+              <p><strong className="text-slate-700">Valores estimados:</strong> {formatarMoeda(valorEstimado)} ({vendasSemPreco.length} saídas antigas sem preço registrado).</p>
+              {temEstimativas && <p>* Total combina preços reais registrados e estimativas pelos preços atuais dos produtos. Não corresponde necessariamente ao faturamento histórico confirmado.</p>}
+            </div>
+          )}
         </div>
 
     </section>
