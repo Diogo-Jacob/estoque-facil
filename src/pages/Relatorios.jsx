@@ -11,6 +11,29 @@ import {
 } from 'recharts'
 import { supabase } from '../services/supabase'
 
+// Ícones vetoriais consistentes, sem fontes externas ou dependências adicionais.
+function Icone({ nome, tamanho = 19, className = '' }) {
+  const base = { size: tamanho, strokeWidth: 1.9 }
+  const caminhos = {
+    entrada: <><path d="m7 7 10 10M17 7v10H7" /></>,
+    saida: <><path d="m7 17 10-10M7 7h10v10" /></>,
+    saldo: <><path d="M3 12h4l3-7 4 14 3-7h4" /></>,
+    financeiro: <><circle cx="12" cy="12" r="9" /><path d="M15 8.5c-.8-.8-1.9-1.2-3.1-1.2-1.8 0-3 .9-3 2.2 0 3.3 6.3 1.2 6.3 4.5 0 1.3-1.2 2.2-3.2 2.2-1.1 0-2.4-.4-3.3-1.4M12 5v14" /></>,
+    alerta: <><path d="M12 3 2 20h20L12 3Z" /><path d="M12 9v4M12 17h.01" /></>,
+    impressora: <><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><path d="M6 14h12v7H6zM18 12h.01" /></>,
+    baixar: <><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4" /></>,
+    filtro: <><path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z" /></>,
+    aplicar: <><path d="M13 2 5 13h6l-1 9 9-12h-6l1-8Z" /></>,
+  }
+  return (
+    <svg width={tamanho} height={tamanho} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={base.strokeWidth} strokeLinecap="round"
+      strokeLinejoin="round" className={className} aria-hidden="true">
+      {caminhos[nome] || caminhos.filtro}
+    </svg>
+  )
+}
+
 function Relatorios({ empresaAtiva }) {
   function obterDataLocal(data = new Date()) {
     const ano = data.getFullYear()
@@ -32,8 +55,9 @@ function Relatorios({ empresaAtiva }) {
   const [dataFinal, setDataFinal] = useState(obterDataLocal())
   const [buscaProduto, setBuscaProduto] = useState('')
   const [canalSelecionado, setCanalSelecionado] = useState('')
-  const [relatorioPorProduto, setRelatorioPorProduto] = useState([])
-  const [vendasDetalhadas, setVendasDetalhadas] = useState([])
+  const [tipoSelecionado, setTipoSelecionado] = useState('todos')
+  const [relatorioDados, setRelatorioPorProduto] = useState([])
+  const [vendasDados, setVendasDetalhadas] = useState([])
   const [carregandoRelatorio, setCarregandoRelatorio] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
   const empresaEhDega = empresaAtiva?.nome?.trim().toLowerCase() === 'dega'
@@ -206,6 +230,14 @@ function Relatorios({ empresaAtiva }) {
     return `${formatarDataBrasil(dataInicial)} a ${formatarDataBrasil(dataFinal)}`
   }
 
+  // O filtro de tipo afeta a visualização, sem alterar a consulta nem os dados originais.
+  const relatorioPorProduto = tipoSelecionado === 'entrada'
+    ? relatorioDados.filter((item) => item.entradas > 0).map((item) => ({ ...item, saidas: 0, valorTotalVendido: 0 }))
+    : tipoSelecionado === 'saida'
+      ? relatorioDados.filter((item) => item.saidas > 0).map((item) => ({ ...item, entradas: 0 }))
+      : relatorioDados
+  const vendasDetalhadas = tipoSelecionado === 'entrada' ? [] : vendasDados
+
   const totalEntradas = relatorioPorProduto.reduce(
     (total, item) => total + item.entradas,
     0
@@ -313,15 +345,15 @@ function Relatorios({ empresaAtiva }) {
 
   function GraficoRoscaCanais() {
     // O gráfico usa unidades movimentadas, não faturamento nem número de lançamentos.
-    const raio = 72
+    const raio = 76
     const circunferencia = 2 * Math.PI * raio
     let posicaoAtual = 0
 
     return (
-      <div className="flex flex-col items-center gap-5 sm:flex-row sm:justify-center lg:flex-col xl:flex-row">
-        <div className="relative h-52 w-52 shrink-0" role="img" aria-label={`Distribuição de ${formatarQuantidade(totalUnidadesCanais)} unidades por canal de venda`}>
+      <div className="flex flex-col items-center justify-center gap-5 sm:flex-row lg:flex-col xl:flex-row">
+        <div className="relative h-36 w-36 shrink-0 sm:h-40 sm:w-40" role="img" aria-label={`Distribuição de ${formatarQuantidade(totalUnidadesCanais)} unidades por canal de venda`}>
           <svg viewBox="0 0 200 200" className="h-full w-full" aria-hidden="true">
-            <circle cx="100" cy="100" r={raio} fill="none" stroke="#e2e8f0" strokeWidth="24" />
+            <circle cx="100" cy="100" r={raio} fill="none" stroke="#e2e8f0" strokeWidth="22" />
             {distribuicaoCanais.map((canal) => {
               const comprimento = (canal.percentual / 100) * circunferencia
               const deslocamento = posicaoAtual
@@ -334,7 +366,7 @@ function Relatorios({ empresaAtiva }) {
                   r={raio}
                   fill="none"
                   stroke={canal.cor}
-                  strokeWidth="24"
+                  strokeWidth="22"
                   strokeDasharray={`${comprimento} ${circunferencia - comprimento}`}
                   strokeDashoffset={-deslocamento}
                   transform="rotate(-90 100 100)"
@@ -349,7 +381,7 @@ function Relatorios({ empresaAtiva }) {
             <span className="mt-1 text-xs font-medium text-slate-500">unidades</span>
           </div>
         </div>
-        <div className="w-full min-w-0 max-w-xs space-y-3">
+        <div className="w-full min-w-0 max-w-xs space-y-3 px-2 sm:w-auto sm:flex-1 sm:px-0">
           {distribuicaoCanais.map((canal) => (
             <div key={canal.canal} className="flex items-center gap-3 text-sm">
               <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: canal.cor }} />
@@ -710,156 +742,101 @@ function Relatorios({ empresaAtiva }) {
     }
   }
 
+  const resumoCards = [
+    { titulo: 'Total de entradas', valor: formatarQuantidade(totalEntradas), detalhe: 'unidades no período', icone: 'entrada', cor: 'text-blue-600 bg-blue-50' },
+    { titulo: 'Total de saídas', valor: formatarQuantidade(totalSaidas), detalhe: 'unidades no período', icone: 'saida', cor: 'text-rose-500 bg-rose-50' },
+    { titulo: 'Saldo líquido', valor: `${totalEntradas - totalSaidas >= 0 ? '+' : ''}${formatarQuantidade(totalEntradas - totalSaidas)}`, detalhe: 'entradas menos saídas', icone: 'saldo', cor: 'text-emerald-600 bg-emerald-50' },
+    ...(!empresaEhDega ? [{ titulo: 'Valor estimado das saídas', valor: formatarMoeda(totalValorVendido), detalhe: 'preços atuais dos produtos', icone: 'financeiro', cor: 'text-violet-600 bg-violet-50' }] : [
+      { titulo: 'Produtos com estoque baixo', valor: formatarQuantidade(produtosComEstoqueBaixo.length), detalhe: 'dos produtos encontrados', icone: 'alerta', cor: 'text-amber-600 bg-amber-50' },
+    ]),
+  ]
+
   return (
-    <section>
-      <div>
-        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 print:mb-6">
-          <div>
-            <h2 className="text-3xl font-bold text-slate-900">Relatório</h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Período analisado: {gerarTextoPeriodo()} · Canal: {nomeCanalSelecionado}
-            </p>
-          </div>
-
-          {!gerandoPdf && (
-            <div className="flex flex-col sm:flex-row gap-3 print:hidden">
-              <button
-                onClick={salvarRelatorioPdf}
-                disabled={gerandoPdf || carregandoRelatorio}
-                className="rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white hover:bg-slate-700 disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {gerandoPdf ? 'Gerando PDF...' : 'Salvar PDF'}
-              </button>
-
-              <button
-                onClick={imprimirRelatorio}
-                disabled={carregandoRelatorio}
-                className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
-              >
-                Imprimir relatório
-              </button>
-            </div>
-          )}
+    <section className="min-w-0 bg-transparent pb-8">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.24em] text-blue-600">Análise e inteligência</p>
+          <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">Relatórios</h2>
+          <p className="mt-1 max-w-full break-words text-sm leading-relaxed text-slate-500">Dados consolidados da {empresaAtiva?.nome || 'empresa'} para decisões mais seguras.</p>
         </div>
-
-        <div
-          className={
-            gerandoPdf
-              ? 'mt-6 grid grid-cols-3 gap-4'
-              : 'mt-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5 print:grid-cols-3 print:gap-4'
-          }
-        >
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Entradas no período</p>
-            <strong className="mt-2 block text-3xl text-slate-900">
-              {carregandoRelatorio ? '...' : totalEntradas}
-            </strong>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Saídas no período</p>
-            <strong className="mt-2 block text-3xl text-slate-900">
-              {carregandoRelatorio ? '...' : totalSaidas}
-            </strong>
-          </div>
-
-          {!gerandoPdf && (
-            <div className="bg-white rounded-2xl shadow-sm p-5 print:hidden">
-              <p className="text-sm text-slate-500">Estoque baixo</p>
-              <strong className="mt-2 block text-3xl text-red-600">
-                {carregandoRelatorio ? '...' : produtosComEstoqueBaixo.length}
-              </strong>
-            </div>
-          )}
-
-          {!empresaEhDega && <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Valor total vendido</p>
-            <strong className="mt-2 block whitespace-nowrap text-xl font-bold tracking-tight text-slate-900 xl:text-2xl">
-              {carregandoRelatorio ? '...' : formatarMoeda(totalValorVendido)}
-            </strong>
-          </div>}
-
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Produto mais vendido</p>
-            <strong className="mt-2 block text-lg text-slate-900">
-              {carregandoRelatorio
-                ? 'Carregando...'
-                : produtoMaisVendido && produtoMaisVendido.saidas > 0
-                  ? produtoMaisVendido.produto
-                  : 'Sem vendas'}
-            </strong>
-          </div>
+        <div className="flex w-full gap-2 sm:w-auto">
+          <button
+            type="button"
+            onClick={imprimirRelatorio}
+            disabled={carregandoRelatorio || gerandoPdf}
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-60 sm:flex-none"
+          >
+            <Icone nome="impressora" tamanho={17} /> Imprimir
+          </button>
+          <button
+            type="button"
+            onClick={salvarRelatorioPdf}
+            disabled={carregandoRelatorio || gerandoPdf}
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60 sm:flex-none"
+          >
+            <Icone nome="baixar" tamanho={17} /> {gerandoPdf ? 'Gerando...' : 'Exportar PDF'}
+          </button>
         </div>
+      </div>
 
-        {!gerandoPdf && (
-          <div className="mt-6 bg-white rounded-2xl shadow-sm p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 print:hidden">
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-slate-600">
-                Data inicial
-              </label>
-
-              <input
-                type="date"
-                value={dataInicial}
-                onChange={(event) => setDataInicial(event.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-slate-600">
-                Data final
-              </label>
-
-              <input
-                type="date"
-                value={dataFinal}
-                min={dataInicial}
-                onChange={(event) => setDataFinal(event.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-slate-600">
-                Produto
-              </label>
-
-              <input
-                type="text"
-                value={buscaProduto}
-                onChange={(event) => setBuscaProduto(event.target.value)}
-                placeholder="Filtrar por produto"
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-slate-600">
-                Canal de venda
-              </label>
-              <select
-                value={canalSelecionado}
-                onChange={(event) => setCanalSelecionado(event.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                <option value="">Todos os canais</option>
-                {canaisVenda.map((canal) => (
-                  <option key={canal.valor} value={canal.valor}>{canal.nome}</option>
-                ))}
-                <option value="__sem_canal__">Não informado</option>
-              </select>
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm sm:p-5">
+        <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900"><Icone nome="filtro" tamanho={18} /> Filtros do relatório</h3>
+          <span className="text-xs text-slate-400">Combine os critérios para refinar os dados</span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
+          <div className="min-w-0">
+            <label className="mb-1.5 block text-xs font-semibold text-slate-600">Período</label>
+            <div className="flex min-w-0 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+              <input type="date" aria-label="Data inicial" value={dataInicial} onChange={(event) => setDataInicial(event.target.value)} className="min-w-0 w-1/2 bg-transparent py-3 text-xs text-slate-700 outline-none" />
+              <span className="shrink-0 text-xs text-slate-400">–</span>
+              <input type="date" aria-label="Data final" min={dataInicial} value={dataFinal} onChange={(event) => setDataFinal(event.target.value)} className="min-w-0 w-1/2 bg-transparent py-3 text-xs text-slate-700 outline-none" />
             </div>
           </div>
-        )}
+          <div className="min-w-0">
+            <label className="mb-1.5 block text-xs font-semibold text-slate-600" htmlFor="busca-relatorio-produto">Produto</label>
+            <input id="busca-relatorio-produto" value={buscaProduto} onChange={(event) => setBuscaProduto(event.target.value)} placeholder="Todos os produtos" className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+          </div>
+          <div className="min-w-0">
+            <label className="mb-1.5 block text-xs font-semibold text-slate-600" htmlFor="tipo-relatorio">Tipo</label>
+            <select id="tipo-relatorio" value={tipoSelecionado} onChange={(event) => setTipoSelecionado(event.target.value)} className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+              <option value="todos">Entradas e saídas</option>
+              <option value="entrada">Somente entradas</option>
+              <option value="saida">Somente saídas</option>
+            </select>
+          </div>
+          <div className="min-w-0">
+            <label className="mb-1.5 block text-xs font-semibold text-slate-600" htmlFor="canal-relatorio">Canal de venda</label>
+            <select id="canal-relatorio" value={canalSelecionado} onChange={(event) => setCanalSelecionado(event.target.value)} className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+              <option value="">Todos os canais</option>
+              {canaisVenda.map((canal) => <option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}
+              <option value="__sem_canal__">Não informado</option>
+            </select>
+          </div>
+          <button type="button" onClick={carregarRelatorio} disabled={carregandoRelatorio} className="w-full whitespace-nowrap rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60 xl:w-auto">
+            <span className="inline-flex items-center justify-center gap-2"><Icone nome="aplicar" tamanho={17} /> Aplicar filtros</span>
+          </button>
+        </div>
+        <p className="mt-3 text-xs text-slate-400">Os filtros atualizam o relatório automaticamente. Canal de venda se aplica às saídas; entradas permanecem apenas no consolidado.</p>
+      </div>
 
-        <div className={`mt-6 grid grid-cols-1 gap-5 ${empresaEhDega ? '' : '2xl:grid-cols-[minmax(0,1.65fr)_minmax(350px,1fr)]'}`}>
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {resumoCards.map((card) => (
+          <div key={card.titulo} className="min-w-0 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm sm:p-5">
+            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl text-lg font-bold ${card.cor}`}>{<Icone nome={card.icone} tamanho={21} />}</div>
+            <p className="text-xs font-medium text-slate-500">{card.titulo}</p>
+            <strong className="mt-1 block break-words text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">{carregandoRelatorio ? '...' : card.valor}</strong>
+            <p className="mt-1 text-[11px] text-slate-400">{card.detalhe}</p>
+          </div>
+        ))}
+      </div>
+
+        <div className={`mt-6 grid grid-cols-1 gap-5 ${empresaEhDega ? '' : 'lg:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]'}`}>
         {!empresaEhDega && (
-          <div className="min-w-0 rounded-2xl bg-white p-6 shadow-sm print:break-inside-avoid">
+          <div className="min-w-0 h-full rounded-2xl border border-slate-100 bg-white p-4 shadow-sm print:break-inside-avoid sm:p-5">
             <h3 className="text-xl font-bold text-slate-900">Produtos mais vendidos</h3>
             <p className="mt-1 text-xs text-slate-500">
-              Produtos ordenados por quantidade de saídas · Role para baixo para ver todos.
+              Quantidade por identificador único. Role para ver todos.
             </p>
 
             {carregandoRelatorio ? (
@@ -867,13 +844,30 @@ function Relatorios({ empresaAtiva }) {
                 Carregando gráfico...
               </div>
             ) : dadosGraficoMaisVendidos.length > 0 ? (
-              <div className="mt-6 max-h-[600px] overflow-auto rounded-xl border border-slate-100 bg-white">
-                <div className="min-w-[710px]" style={{ height: alturaGraficoVendas }}>
+              <div className="mt-5 max-h-[340px] overflow-y-auto overflow-x-hidden rounded-xl bg-white pr-1">
+                {/* No celular as barras usam layout nativo: sem rolagem lateral ou nomes cortados. */}
+                <div className="space-y-4 p-4 sm:hidden">
+                  {dadosGraficoMaisVendidos.map((item) => {
+                    const maior = Math.max(dadosGraficoMaisVendidos[0]?.saidas || 0, 1)
+                    return (
+                      <div key={item.produtoId} className="min-w-0">
+                        <div className="mb-1.5 flex items-start justify-between gap-3 text-sm">
+                          <span className="min-w-0 break-words font-semibold leading-snug text-slate-700">{item.nomeCompleto}</span>
+                          <strong className="shrink-0 tabular-nums text-slate-900">{formatarQuantidade(item.saidas)}</strong>
+                        </div>
+                        <div className="h-3.5 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-full rounded-full bg-blue-600" style={{ width: `${(item.saidas / maior) * 100}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="hidden w-full sm:block" style={{ height: alturaGraficoVendas }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={dadosGraficoMaisVendidos}
                       layout="vertical"
-                      margin={{ top: 20, right: 102, left: 10, bottom: 24 }}
+                      margin={{ top: 6, right: 73, left: 4, bottom: 8 }}
                       barCategoryGap="24%"
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
@@ -888,11 +882,11 @@ function Relatorios({ empresaAtiva }) {
                       <YAxis
                         type="category"
                         dataKey="produtoId"
-                        width={250}
+                        width={190}
                         interval={0}
                         tickLine={false}
                         axisLine={false}
-                        tick={{ fill: '#334155', fontSize: 14, fontWeight: 500 }}
+                        tick={{ fill: '#334155', fontSize: 12, fontWeight: 500 }}
                         tickFormatter={(id) => nomesProdutosGrafico.get(id) || id}
                       />
                       <Tooltip
@@ -910,12 +904,12 @@ function Relatorios({ empresaAtiva }) {
                         name="Saídas"
                         fill="#2563eb"
                         radius={[0, 7, 7, 0]}
-                        maxBarSize={29}
+                        maxBarSize={22}
                         background={{ fill: '#f1f5f9', radius: 7 }}
                         label={{
                           position: 'right',
                           fill: '#334155',
-                          fontSize: 13,
+                          fontSize: 12,
                           fontWeight: 600,
                           formatter: (value) => Number(value).toLocaleString('pt-BR'),
                         }}
@@ -932,24 +926,24 @@ function Relatorios({ empresaAtiva }) {
           </div>
         )}
 
-        <div className="min-w-0 rounded-2xl bg-white p-6 shadow-sm print:break-inside-avoid">
+        <div className="min-w-0 h-full rounded-2xl border border-slate-100 bg-white p-4 shadow-sm print:break-inside-avoid sm:p-5">
           <h3 className="text-xl font-bold text-slate-900">Distribuição por canal</h3>
-          <p className="mt-1 text-sm text-slate-500">Participação de cada canal na quantidade de unidades de saída.</p>
+          <p className="mt-1 text-sm text-slate-500">Participação nas saídas por canal de venda.</p>
           {carregandoRelatorio ? (
             <p className="mt-6 rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Carregando canais...</p>
           ) : totalUnidadesCanais > 0 ? (
-            <div className="mt-5"><GraficoRoscaCanais /></div>
+            <div className="mt-6 flex min-h-[230px] items-center justify-center"><GraficoRoscaCanais /></div>
           ) : (
             <p className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
               Nenhuma saída encontrada para os filtros selecionados.
             </p>
           )}
-          <p className="mt-5 text-xs text-slate-400">Considera as saídas originais não estornadas dos produtos incluídos no relatório.</p>
+
         </div>
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-2xl bg-white shadow-sm">
-          <div className="flex flex-col gap-1 border-b border-slate-100 px-6 py-5 sm:flex-row sm:items-end sm:justify-between">
+        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <div className="flex flex-col gap-1 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6">
             <div>
               <h3 className="text-xl font-bold text-slate-900">Detalhamento por canal</h3>
               <p className="mt-1 text-sm text-slate-500">Consolidado por canal no período e nos filtros selecionados.</p>
@@ -994,7 +988,7 @@ function Relatorios({ empresaAtiva }) {
                     <td className="px-5 py-4 text-right">{formatarQuantidade(totalMovimentacoesCanais)}</td>
                     <td className="px-5 py-4 text-right">{formatarQuantidade(totalUnidadesCanais)}</td>
                     {!empresaEhDega && <td className="px-5 py-4 text-right">{formatarMoeda(distribuicaoCanais.reduce((total, canal) => total + canal.valorTotal, 0))}</td>}
-                    <td className="px-6 py-4 text-right">100%</td>
+                    <td className="px-6 py-4 text-right">{totalUnidadesCanais > 0 ? '100%' : '0%'}</td>
                   </tr>
                 </tfoot>
               )}
@@ -1003,151 +997,6 @@ function Relatorios({ empresaAtiva }) {
           {!empresaEhDega && <p className="border-t border-slate-100 px-6 py-3 text-xs text-slate-500">Valor estimado com base nos preços unitários atuais dos produtos. Não representa necessariamente o faturamento histórico.</p>}
         </div>
 
-        {!gerandoPdf && (
-          <div className="mt-6 bg-white rounded-2xl shadow-sm overflow-hidden print:hidden">
-            <div className="px-6 py-5 border-b border-slate-100">
-              <h3 className="text-xl font-bold text-slate-900">
-                Detalhamento por produto
-              </h3>
-
-              <p className="mt-1 text-sm text-slate-500">
-                Entradas, saídas, estoque atual e valor vendido no período selecionado.
-              </p>
-            </div>
-
-            {carregandoRelatorio ? (
-              <p className="px-5 py-8 text-center text-slate-500">
-                Carregando relatório...
-              </p>
-            ) : (
-              <>
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50 text-slate-500">
-                      <tr className="text-left">
-                        <th className="px-5 py-4">Produto</th>
-                        <th className="px-5 py-4">Categoria</th>
-                        <th className="px-5 py-4">Entradas</th>
-                        <th className="px-5 py-4">Saídas</th>
-                        {!empresaEhDega && <th className="px-5 py-4">Valor total</th>}
-                        <th className="px-5 py-4">Estoque atual</th>
-                        <th className="px-5 py-4">Status</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {relatorioPorProduto.map((item) => (
-                        <tr
-                          key={item.produtoId}
-                          className="border-t border-slate-100"
-                        >
-                          <td className="px-5 py-4 font-medium text-slate-900">
-                            {item.produto}
-                          </td>
-
-                          <td className="px-5 py-4 text-slate-600">
-                            {item.categoria}
-                          </td>
-
-                          <td className="px-5 py-4 text-slate-600">
-                            {item.entradas}
-                          </td>
-
-                          <td className="px-5 py-4 text-slate-600">
-                            {item.saidas}
-                          </td>
-
-                          {!empresaEhDega && <td className="px-5 py-4 font-semibold text-slate-900">
-                            {formatarMoeda(item.valorTotalVendido)}
-                          </td>}
-
-                          <td className="px-5 py-4 text-slate-600">
-                            {item.estoqueAtual}
-                          </td>
-
-                          <td className="px-5 py-4">
-                            <StatusEstoque item={item} />
-                          </td>
-                        </tr>
-                      ))}
-
-                      {relatorioPorProduto.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={empresaEhDega ? 6 : 7}
-                            className="px-5 py-8 text-center text-slate-500"
-                          >
-                            Nenhum produto encontrado no relatório.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="md:hidden p-4 space-y-3">
-                  {relatorioPorProduto.map((item) => (
-                    <div
-                      key={item.produtoId}
-                      className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold text-slate-900">
-                            {item.produto}
-                          </p>
-
-                          <p className="mt-1 text-sm text-slate-500">
-                            {item.categoria}
-                          </p>
-                        </div>
-
-                        <StatusEstoque item={item} />
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Entradas</p>
-                          <p className="text-lg font-bold text-slate-900">
-                            {item.entradas}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Saídas</p>
-                          <p className="text-lg font-bold text-slate-900">
-                            {item.saidas}
-                          </p>
-                        </div>
-
-                        {!empresaEhDega && <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Valor</p>
-                          <p className="text-sm font-bold text-slate-900">
-                            {formatarMoeda(item.valorTotalVendido)}
-                          </p>
-                        </div>}
-
-                        <div className="rounded-xl bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Estoque</p>
-                          <p className="text-lg font-bold text-slate-900">
-                            {item.estoqueAtual}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-
-                  {relatorioPorProduto.length === 0 && (
-                    <p className="text-center text-sm text-slate-500">
-                      Nenhum produto encontrado no relatório.
-                    </p>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
     </section>
   )
 }
