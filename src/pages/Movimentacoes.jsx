@@ -17,6 +17,7 @@ function Movimentacoes({
 
   const [filtroProduto, setFiltroProduto] = useState('')
   const [filtroTipo, setFiltroTipo] = useState('')
+  const [filtroCanalVenda, setFiltroCanalVenda] = useState('')
   const [dataInicial, setDataInicial] = useState('')
   const [dataFinal, setDataFinal] = useState('')
 
@@ -187,6 +188,17 @@ function Movimentacoes({
       consulta = consulta.eq('tipo', filtroTipo)
     }
 
+    if (empresaUsaCanalVenda && filtroCanalVenda) {
+      // Um canal pertence a uma saída, não a uma entrada de estoque.
+      consulta = consulta.eq('tipo', 'saida')
+
+      if (filtroCanalVenda === '__sem_canal__') {
+        consulta = consulta.or('canal_venda.is.null,canal_venda.eq.""')
+      } else {
+        consulta = consulta.eq('canal_venda', filtroCanalVenda)
+      }
+    }
+
     if (dataInicial) {
       consulta = consulta.gte('data_movimentacao', dataInicial)
     }
@@ -211,6 +223,7 @@ function Movimentacoes({
   function limparFiltrosHistorico() {
     setFiltroProduto('')
     setFiltroTipo('')
+    setFiltroCanalVenda('')
     setDataInicial('')
     setDataFinal('')
     setHistoricoCompleto([])
@@ -863,7 +876,7 @@ function Movimentacoes({
             </p>
           </div>
 
-          <div className="p-5 grid grid-cols-1 md:grid-cols-5 gap-4 border-b border-slate-100">
+          <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4 border-b border-slate-100">
             <select
               value={filtroProduto}
               onChange={(event) => setFiltroProduto(event.target.value)}
@@ -888,6 +901,23 @@ function Movimentacoes({
               <option value="saida">Saída</option>
             </select>
 
+            {empresaUsaCanalVenda && (
+              <select
+                value={filtroCanalVenda}
+                onChange={(event) => setFiltroCanalVenda(event.target.value)}
+                aria-label="Filtrar por canal de venda"
+                className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="">Todos os canais</option>
+                {canaisVenda.map((canal) => (
+                  <option key={canal.valor} value={canal.valor}>
+                    {canal.nome}
+                  </option>
+                ))}
+                <option value="__sem_canal__">Não informado</option>
+              </select>
+            )}
+
             <input
               type="date"
               value={dataInicial}
@@ -902,6 +932,12 @@ function Movimentacoes({
               className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
 
+            {filtroCanalVenda && filtroTipo === 'entrada' && (
+              <p className="md:col-span-2 xl:col-span-6 text-sm text-amber-700">
+                O filtro por canal se aplica somente às saídas. Selecione “Todos os tipos” ou “Saída”.
+              </p>
+            )}
+
             <button
               onClick={limparFiltrosHistorico}
               className="rounded-xl bg-slate-100 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-200"
@@ -912,7 +948,7 @@ function Movimentacoes({
             <button
               onClick={buscarHistoricoCompleto}
               disabled={carregandoHistoricoCompleto}
-              className="md:col-span-5 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed"
+              className="md:col-span-2 xl:col-span-6 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {carregandoHistoricoCompleto
                 ? 'Buscando histórico...'
