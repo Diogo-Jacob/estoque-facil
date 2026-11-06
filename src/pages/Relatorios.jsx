@@ -755,7 +755,6 @@ function Relatorios({ empresaAtiva }) {
     <section className="min-w-0 bg-transparent pb-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.24em] text-blue-600">Análise e inteligência</p>
           <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">Relatórios</h2>
           <p className="mt-1 max-w-full break-words text-sm leading-relaxed text-slate-500">Dados consolidados da {empresaAtiva?.nome || 'empresa'} para decisões mais seguras.</p>
         </div>

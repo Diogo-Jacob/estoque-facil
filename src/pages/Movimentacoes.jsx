@@ -16,6 +16,9 @@ function Movimentacoes({
     useState(false)
 
   const [filtroProduto, setFiltroProduto] = useState('')
+  const [buscaHistorico, setBuscaHistorico] = useState('')
+  const [filtrosAvancados, setFiltrosAvancados] = useState(false)
+  const [paginaHistorico, setPaginaHistorico] = useState(1)
   const [filtroTipo, setFiltroTipo] = useState('')
   const [filtroCanalVenda, setFiltroCanalVenda] = useState('')
   const [dataInicial, setDataInicial] = useState('')
@@ -35,6 +38,7 @@ function Movimentacoes({
     data: new Date().toISOString().split('T')[0],
     quantidade: '',
     canalVenda: '',
+    valorUnitario: '',
     observacao: '',
   })
 
@@ -102,6 +106,26 @@ function Movimentacoes({
   )
 
   const quantidadeInformada = Number(novaMovimentacao.quantidade || 0)
+  const precoPadrao = Number(produtoSelecionado?.valorUnitario ?? produtoSelecionado?.valor_unitario ?? 0)
+  const precoDigitado = novaMovimentacao.valorUnitario.trim()
+  const precoEfetivo = precoDigitado === '' ? precoPadrao : Number(precoDigitado.replace(',', '.'))
+  const valorTotal = quantidadeInformada > 0 && Number.isFinite(precoEfetivo) ? quantidadeInformada * precoEfetivo : 0
+  const mostrarPreco = empresaEhSdPlasticos && novaMovimentacao.tipo === 'saida'
+  const formatarNumero = (numero) => Number(numero || 0).toLocaleString('pt-BR')
+  const formatarMoeda = (numero) => Number(numero || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  function dataLegivel(data) {
+    if (!data) return '—'
+    const [ano, mes, dia] = data.split('-')
+    return ano && mes && dia ? `${dia}/${mes}/${ano}` : data
+  }
+  const historicoExibido = historicoBuscado ? historicoCompleto : movimentacoesRecentes
+  const historicoFiltrado = historicoExibido.filter((item) =>
+    !buscaHistorico.trim() || item.produtoNome.toLowerCase().includes(buscaHistorico.toLowerCase().trim()) || String(item.id).toLowerCase().includes(buscaHistorico.toLowerCase().trim())
+  )
+  const itensPorPagina = 10
+  const paginas = Math.max(1, Math.ceil(historicoFiltrado.length / itensPorPagina))
+  const paginaAtual = Math.min(paginaHistorico, paginas)
+  const listaPagina = historicoFiltrado.slice((paginaAtual - 1) * itensPorPagina, paginaAtual * itensPorPagina)
 
   const estoqueAposMovimentacao = produtoSelecionado
     ? novaMovimentacao.tipo === 'entrada'
@@ -151,6 +175,7 @@ function Movimentacoes({
       quantidade: movimentacao.quantidade,
       data: movimentacao.data_movimentacao,
       canalVenda: movimentacao.canal_venda || '',
+      valorUnitario: movimentacao.valor_unitario ?? null,
       observacao: movimentacao.observacao || '',
       criadaEm: movimentacao.criada_em,
       estornada: movimentacao.estornada,
@@ -217,6 +242,7 @@ function Movimentacoes({
     }
 
     setHistoricoCompleto(data.map(formatarMovimentacao))
+    setPaginaHistorico(1)
     setCarregandoHistoricoCompleto(false)
   }
 
@@ -228,6 +254,8 @@ function Movimentacoes({
     setDataFinal('')
     setHistoricoCompleto([])
     setHistoricoBuscado(false)
+    setPaginaHistorico(1)
+    setBuscaHistorico('')
   }
 
   async function salvarMovimentacao() {
@@ -266,6 +294,14 @@ function Movimentacoes({
       return
     }
 
+    if (!Number.isInteger(quantidade)) {
+      alert('Informe uma quantidade inteira de unidades.')
+      return
+    }
+    if (mostrarPreco && (!Number.isFinite(precoEfetivo) || precoEfetivo < 0 || Math.round(precoEfetivo * 100) / 100 !== precoEfetivo)) {
+      alert('Informe um preço unitário válido com até duas casas decimais.')
+      return
+    }
     setSalvando(true)
 
     const movimentacaoParaSalvar = {
@@ -280,6 +316,7 @@ function Movimentacoes({
           ? novaMovimentacao.canalVenda || null
           : null,
       observacao: novaMovimentacao.observacao.trim() || null,
+      valor_unitario: mostrarPreco ? precoEfetivo : null,
     }
 
     const { error } = await supabase
@@ -314,6 +351,7 @@ function Movimentacoes({
       data: new Date().toISOString().split('T')[0],
       quantidade: '',
       canalVenda: '',
+      valorUnitario: '',
       observacao: '',
     })
 
@@ -369,615 +407,83 @@ function Movimentacoes({
     return !movimentacao.estornada && !movimentacao.movimentacaoOriginalId
   }
 
-  function BadgeTipo({ tipo }) {
-    return (
-      <span
-        className={
-          tipo === 'entrada'
-            ? 'rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700'
-            : 'rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700'
-        }
-      >
-        {tipo === 'entrada' ? 'Entrada' : 'Saída'}
-      </span>
-    )
-  }
-
-  function BotaoEstorno({ movimentacao, mobile = false }) {
-    if (!podeEstornar(movimentacao)) {
-      return mobile ? (
-        <div className="rounded-xl bg-slate-50 px-4 py-3 text-center">
-          <span className="text-sm font-medium text-slate-400">
-            Esta movimentação é um estorno ou já foi estornada
-          </span>
-        </div>
-      ) : (
-        <span className="text-xs text-slate-400">Estorno</span>
-      )
+  function Icone({ nome, size = 18, className = '' }) {
+    const desenhos = {
+      entrada: <><path d="m15 3-9 9"/><path d="M6 4v8h8"/></>,
+      saida: <><path d="m9 15 9-9"/><path d="M10 6h8v8"/></>,
+      caixa: <><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="M3 7v10l9 5 9-5V7M12 12v10"/></>,
+      calendario: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></>,
+      carrinho: <><circle cx="9" cy="20" r="1"/><circle cx="19" cy="20" r="1"/><path d="M2 3h2l3 13h13l2-9H5"/></>,
+      seta: <><path d="M4 12h16m-6-6 6 6-6 6"/></>,
+      chevron: <><path d="m6 9 6 6 6-6"/></>,
+      filtro: <><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/></>,
+      busca: <><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></>,
+      check: <><path d="m4 12 5 5L20 6"/></>,
+      escudo: <><path d="M12 22c6-3 8-7 8-12V5l-8-3-8 3v5c0 5 2 9 8 12Z"/><path d="m9 12 2 2 4-4"/></>,
+      esquerda: <><path d="m15 18-6-6 6-6"/></>,
+      direita: <><path d="m9 18 6-6-6-6"/></>,
     }
-
-    return (
-      <button
-        onClick={() => estornarMovimentacao(movimentacao)}
-        disabled={estornandoId === movimentacao.id}
-        className={
-          mobile
-            ? 'w-full rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-60 disabled:cursor-not-allowed'
-            : 'text-sm font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-60 disabled:cursor-not-allowed'
-        }
-      >
-        {estornandoId === movimentacao.id
-          ? 'Estornando...'
-          : mobile
-            ? 'Estornar movimentação'
-            : 'Estornar'}
-      </button>
-    )
+    return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>{desenhos[nome] || desenhos.caixa}</svg>
   }
 
-  function TabelaMovimentacoes({ lista }) {
-    return (
-      <div className="hidden md:block overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-500">
-            <tr className="text-left">
-              <th className="px-5 py-4">Produto</th>
-              <th className="px-5 py-4">Tipo</th>
-              <th className="px-5 py-4">Quantidade</th>
-              <th className="px-5 py-4">Data</th>
-              {empresaUsaCanalVenda && (
-                <th className="px-5 py-4">Canal</th>
-              )}
-              <th className="px-5 py-4">Observação</th>
-              <th className="px-5 py-4">Ações</th>
-            </tr>
-          </thead>
+  const campo = 'mt-2 min-h-[44px] w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
+  const rotulo = 'block text-xs font-semibold text-slate-700'
 
-          <tbody>
-            {lista.map((movimentacao) => (
-              <tr key={movimentacao.id} className="border-t border-slate-100">
-                <td className="px-5 py-4 font-medium text-slate-900">
-                  {movimentacao.produtoNome}
-                </td>
-
-                <td className="px-5 py-4">
-                  <BadgeTipo tipo={movimentacao.tipo} />
-                </td>
-
-                <td className="px-5 py-4 text-slate-600">
-                  {movimentacao.quantidade}
-                </td>
-
-                <td className="px-5 py-4 text-slate-600">
-                  {movimentacao.data}
-                </td>
-
-                {empresaUsaCanalVenda && (
-                  <td className="px-5 py-4 text-slate-600">
-                    {movimentacao.tipo === 'saida'
-                      ? formatarCanalVenda(movimentacao.canalVenda)
-                      : '-'}
-                  </td>
-                )}
-
-                <td className="px-5 py-4 text-slate-600">
-                  {movimentacao.observacao || '-'}
-                </td>
-
-                <td className="px-5 py-4">
-                  <BotaoEstorno movimentacao={movimentacao} />
-                </td>
-              </tr>
-            ))}
-
-            {lista.length === 0 && (
-              <tr>
-                <td
-                  colSpan={empresaUsaCanalVenda ? 7 : 6}
-                  className="px-5 py-8 text-center text-slate-500"
-                >
-                  Nenhuma movimentação encontrada.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    )
+  function BadgeTipo({ tipo }) {
+    const entrada = tipo === 'entrada'
+    return <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${entrada ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'}`}><Icone nome={tipo} size={13}/>{entrada ? 'Entrada' : 'Saída'}</span>
   }
 
-  function CardsMovimentacoes({ lista }) {
-    return (
-      <div className="md:hidden p-4 space-y-3">
-        {lista.map((movimentacao) => (
-          <div
-            key={movimentacao.id}
-            className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold text-slate-900">
-                  {movimentacao.produtoNome}
-                </p>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  {movimentacao.data}
-                </p>
-              </div>
-
-              <BadgeTipo tipo={movimentacao.tipo} />
-            </div>
-
-            <div
-              className={
-                empresaUsaCanalVenda && movimentacao.tipo === 'saida'
-                  ? 'mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3'
-                  : 'mt-3 grid grid-cols-2 gap-3'
-              }
-            >
-              <div className="rounded-lg bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">Quantidade</p>
-                <p className="text-lg font-bold text-slate-900">
-                  {movimentacao.quantidade}
-                </p>
-              </div>
-
-              {empresaUsaCanalVenda && movimentacao.tipo === 'saida' && (
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Canal</p>
-                  <p className="text-sm font-semibold text-slate-700">
-                    {formatarCanalVenda(movimentacao.canalVenda)}
-                  </p>
-                </div>
-              )}
-
-              <div className="rounded-lg bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">Observação</p>
-                <p className="text-sm text-slate-700">
-                  {movimentacao.observacao || '-'}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <BotaoEstorno movimentacao={movimentacao} mobile />
-            </div>
-          </div>
-        ))}
-
-        {lista.length === 0 && (
-          <p className="text-center text-sm text-slate-500">
-            Nenhuma movimentação encontrada.
-          </p>
-        )}
-      </div>
-    )
+  function BotaoEstorno({ movimentacao }) {
+    if (!podeEstornar(movimentacao)) return <span className="text-xs text-slate-400">Estornada / estorno</span>
+    return <button type="button" disabled={estornandoId === movimentacao.id} onClick={() => estornarMovimentacao(movimentacao)} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-50">{estornandoId === movimentacao.id ? 'Estornando…' : 'Estornar'}</button>
   }
 
-  return (
-    <section>
-      <div>
-        <h2 className="text-3xl font-bold text-slate-900">Movimentações</h2>
+  function HistoricoTabela() {
+    return <div className="overflow-x-auto"><table className="w-full min-w-[760px] border-collapse text-left text-sm"><thead className="border-y border-slate-100 bg-slate-50/80"><tr className="text-[10px] uppercase tracking-wider text-slate-400"><th className="px-5 py-3">Movimentação</th><th className="px-5 py-3">Produto</th><th className="px-5 py-3">Tipo</th><th className="px-5 py-3">Quantidade</th>{empresaUsaCanalVenda && <th className="px-5 py-3">Canal</th>}<th className="px-5 py-3">Observação</th><th className="px-5 py-3">Ações</th></tr></thead><tbody>{listaPagina.map((movimentacao) => <tr key={movimentacao.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70"><td className="px-5 py-3"><p className="font-semibold text-slate-800">#{String(movimentacao.id).slice(0, 8).toUpperCase()}</p><p className="mt-1 text-[11px] text-slate-400">{dataLegivel(movimentacao.data)}</p></td><td className="px-5 py-3 font-medium text-slate-700">{movimentacao.produtoNome}</td><td className="px-5 py-3"><BadgeTipo tipo={movimentacao.tipo}/></td><td className="px-5 py-3 font-medium text-slate-700">{formatarNumero(movimentacao.quantidade)} un.</td>{empresaUsaCanalVenda && <td className="px-5 py-3 text-slate-600">{movimentacao.tipo === 'saida' ? formatarCanalVenda(movimentacao.canalVenda) : '—'}</td>}<td className="max-w-[220px] truncate px-5 py-3 text-slate-500" title={movimentacao.observacao || ''}>{movimentacao.observacao || '—'}</td><td className="px-5 py-3"><BotaoEstorno movimentacao={movimentacao}/></td></tr>)}</tbody></table>{listaPagina.length === 0 && <p className="p-8 text-center text-sm text-slate-500">Nenhuma movimentação encontrada.</p>}</div>
+  }
 
-        <p className="mt-2 text-slate-600">
-          Registre entradas e saídas de produtos no estoque.
-        </p>
-      </div>
+  return <section className="w-full min-w-0 space-y-5 pb-8">
+    <header className="min-w-0 pb-1">
+      <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Movimentações</h1>
+      <p className="mt-1 max-w-full break-words text-sm leading-relaxed text-slate-500">Registre entradas e saídas.</p>
+    </header>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.85fr)_minmax(285px,1fr)] lg:items-stretch">
+      {/* O resumo aparece acima do formulário no celular. */}
+      <aside className="order-1 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:order-2 lg:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold text-slate-900">Resumo da operação</h3><span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${novaMovimentacao.tipo === 'entrada' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'}`}>● {novaMovimentacao.tipo === 'entrada' ? 'Entrada' : 'Saída'}</span></div>
+        {produtoSelecionado ? <>
+          <div className="mt-5 flex items-center gap-3 border-b border-slate-100 pb-5"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><Icone nome="caixa" size={24}/></div><div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-wide text-blue-600">{produtoSelecionado.codigo || 'Produto'}</p><p className="truncate text-sm font-bold text-slate-900">{produtoSelecionado.nome}</p><p className="text-xs text-slate-400">{produtoSelecionado.categoria || 'Estoque'}</p></div></div>
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-slate-100 py-5"><div className="text-center"><p className="text-[11px] text-slate-400">Estoque atual</p><p className="mt-2 text-xl font-extrabold text-slate-900 lg:text-2xl">{formatarNumero(produtoSelecionado.estoqueAtual)}</p><p className="text-[11px] text-slate-400">unidades</p></div><Icone nome="seta" size={20} className="text-slate-400"/><div className={`rounded-xl px-2 py-4 text-center ${estoqueAposMovimentacao < 0 ? 'bg-red-50' : 'bg-emerald-50'}`}><p className="text-[11px] text-slate-500">Estoque previsto</p><p className={`mt-2 text-xl font-extrabold lg:text-2xl ${estoqueAposMovimentacao < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{formatarNumero(quantidadeInformada > 0 ? estoqueAposMovimentacao : produtoSelecionado.estoqueAtual)}</p><p className="text-[11px] text-slate-400">unidades</p></div></div>
+          <div className="space-y-3 py-5 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Quantidade</span><strong className="text-slate-800">{formatarNumero(quantidadeInformada)} un.</strong></div>{mostrarPreco && <><div className="flex justify-between gap-3"><span className="text-slate-500">Valor unitário efetivo</span><strong className="text-slate-800">{formatarMoeda(precoEfetivo)}</strong></div><div className="flex justify-between gap-3 border-t border-slate-100 pt-3"><span className="text-slate-500">Valor total</span><strong className="text-lg text-blue-600">{formatarMoeda(valorTotal)}</strong></div></>}</div>
+          {mostrarPreco && <div className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-500"><Icone nome="escudo" size={18} className="shrink-0 text-blue-600"/>O preço personalizado vale somente para esta saída e não altera o cadastro do produto.</div>}
+          {ficaraAbaixoDoMinimo && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-medium text-amber-800">Atenção: a saída deixará o estoque abaixo do mínimo cadastrado.</p>}
+        </> : <div className="mt-5 flex items-center gap-3 rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500"><Icone nome="caixa" size={24} className="shrink-0 text-blue-500"/>Selecione um produto para visualizar o estoque atual e a previsão da operação.</div>}
+      </aside>
 
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm p-6">
-          <h3 className="text-xl font-bold text-slate-900">
-            Nova movimentação
-          </h3>
-
-          <p className="mt-1 text-sm text-slate-500">
-            Preencha os dados para atualizar o estoque.
-          </p>
-
-          <form className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700">
-                Produto
-              </label>
-
-              <div className="relative mt-1">
-                <input
-                  type="text"
-                  value={buscaProdutoMovimentacao}
-                  onChange={(event) => {
-                    setBuscaProdutoMovimentacao(event.target.value)
-                    atualizarCampo('produtoId', '')
-                    setMostrarSugestoesProduto(true)
-                  }}
-                  onFocus={() => setMostrarSugestoesProduto(true)}
-                  placeholder="Digite para buscar um produto"
-                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-
-                {mostrarSugestoesProduto && (
-                  <div className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-                    {produtosFiltradosMovimentacao.length > 0 ? (
-                      produtosFiltradosMovimentacao.map((produto) => (
-                        <button
-                          key={produto.id}
-                          type="button"
-                          onClick={() => selecionarProduto(produto)}
-                          className="w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
-                        >
-                          <p className="font-semibold text-slate-900">
-                            {produto.nome}
-                          </p>
-
-                          <p className="mt-1 text-xs text-slate-500">
-                            Estoque atual: {produto.estoqueAtual}
-                          </p>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="px-4 py-3 text-sm text-slate-500">
-                        Nenhum produto encontrado.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {novaMovimentacao.produtoId && (
-                  <p className="mt-2 text-xs font-medium text-green-700">
-                    Produto selecionado.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700">
-                Tipo
-              </label>
-
-              <div className="mt-1 grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => atualizarCampo('tipo', 'entrada')}
-                  className={
-                    novaMovimentacao.tipo === 'entrada'
-                      ? 'rounded-xl bg-green-600 px-4 py-3 text-base font-semibold text-white'
-                      : 'rounded-xl border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-700 hover:bg-slate-50'
-                  }
-                >
-                  Entrada
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => atualizarCampo('tipo', 'saida')}
-                  className={
-                    novaMovimentacao.tipo === 'saida'
-                      ? 'rounded-xl bg-red-600 px-4 py-3 text-base font-semibold text-white'
-                      : 'rounded-xl border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-700 hover:bg-slate-50'
-                  }
-                >
-                  Saída
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700">
-                Data
-              </label>
-
-              <input
-                type="date"
-                value={novaMovimentacao.data}
-                onChange={(event) => atualizarCampo('data', event.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700">
-                Quantidade
-              </label>
-
-              <input
-                type="number"
-                min="1"
-                value={novaMovimentacao.quantidade}
-                onChange={(event) =>
-                  atualizarCampo('quantidade', event.target.value)
-                }
-                placeholder="Ex: 10"
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-
-            {empresaUsaCanalVenda && novaMovimentacao.tipo === 'saida' && (
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-slate-700">
-                  Canal de venda <span className="font-normal text-slate-400">(opcional)</span>
-                </label>
-
-                <select
-                  value={novaMovimentacao.canalVenda}
-                  onChange={(event) =>
-                    atualizarCampo('canalVenda', event.target.value)
-                  }
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                >
-                  <option value="">Selecione o canal de venda</option>
-
-                  {canaisVenda.map((canal) => (
-                    <option key={canal.valor} value={canal.valor}>
-                      {canal.nome}
-                    </option>
-                  ))}
-                </select>
-
-                <p className="mt-2 text-xs text-slate-500">
-                  Se informado, o canal será incluído no ranking do relatório.
-                </p>
-              </div>
-            )}
-
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700">
-                Observação
-              </label>
-
-              <textarea
-                value={novaMovimentacao.observacao}
-                onChange={(event) =>
-                  atualizarCampo('observacao', event.target.value)
-                }
-                placeholder="Ex: venda do dia, compra de fornecedor..."
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                rows="3"
-              />
-            </div>
-
-            {saidaMaiorQueEstoque && (
-              <div className="md:col-span-2 rounded-xl bg-red-50 border border-red-100 p-4">
-                <p className="text-sm font-medium text-red-700">
-                  A quantidade informada é maior que o estoque disponível.
-                </p>
-              </div>
-            )}
-
-            {ficaraAbaixoDoMinimo && !saidaMaiorQueEstoque && (
-              <div className="md:col-span-2 rounded-xl bg-yellow-50 border border-yellow-100 p-4">
-                <p className="text-sm font-medium text-yellow-800">
-                  Atenção: essa saída deixará o produto abaixo do estoque mínimo.
-                </p>
-              </div>
-            )}
-
-            <div className="md:col-span-2">
-              <button
-                type="button"
-                onClick={salvarMovimentacao}
-                disabled={salvando || saidaMaiorQueEstoque}
-                className="w-full sm:w-auto rounded-xl bg-blue-600 px-6 py-4 font-semibold text-white hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {salvando ? 'Salvando...' : 'Salvar movimentação'}
-              </button>
-            </div>
-          </form>
+      <div className="order-2 min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:order-1 lg:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-bold text-slate-900">Nova movimentação</h3><p className="mt-1 text-xs text-slate-400">Preencha os dados para atualizar o estoque</p></div></div>
+        <div className="mt-5 grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
+          {['entrada','saida'].map(tipo => <button type="button" key={tipo} onClick={() => atualizarCampo('tipo',tipo)} className={`flex items-center justify-center gap-2 rounded-lg px-3 py-3 text-sm font-semibold transition ${novaMovimentacao.tipo === tipo ? 'border border-slate-100 bg-white shadow-sm' : 'text-slate-500 hover:bg-white/60'} ${tipo === 'entrada' && novaMovimentacao.tipo === tipo ? 'text-emerald-600' : ''} ${tipo === 'saida' && novaMovimentacao.tipo === tipo ? 'text-rose-500' : ''}`}><Icone nome={tipo} size={18}/>{tipo === 'entrada' ? 'Entrada' : 'Saída'}</button>)}
         </div>
-
-        <aside className="bg-white rounded-2xl shadow-sm p-6">
-          <h3 className="text-xl font-bold text-slate-900">
-            Produto selecionado
-          </h3>
-
-          {produtoSelecionado ? (
-            <div className="mt-4 space-y-4">
-              <div>
-                <p className="text-sm text-slate-500">Produto</p>
-                <p className="font-semibold text-slate-900">
-                  {produtoSelecionado.nome}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <p className="text-xs text-slate-500">Estoque atual</p>
-                  <p className="mt-1 text-2xl font-bold text-slate-900">
-                    {produtoSelecionado.estoqueAtual}
-                  </p>
-                </div>
-
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <p className="text-xs text-slate-500">Estoque mínimo</p>
-                  <p className="mt-1 text-2xl font-bold text-slate-900">
-                    {produtoSelecionado.estoqueMinimo}
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
-                <p className="text-xs text-blue-700">
-                  Estoque após movimentação
-                </p>
-
-                <p className="mt-1 text-2xl font-bold text-blue-900">
-                  {quantidadeInformada > 0
-                    ? estoqueAposMovimentacao
-                    : produtoSelecionado.estoqueAtual}
-                </p>
-              </div>
-
-              {produtoSelecionado.observacao && (
-                <div>
-                  <p className="text-sm text-slate-500">Observação</p>
-                  <p className="text-sm text-slate-700">
-                    {produtoSelecionado.observacao}
-                  </p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="mt-4 rounded-xl bg-slate-50 border border-dashed border-slate-300 p-4">
-              <p className="text-sm text-slate-500">
-                Selecione um produto para visualizar estoque atual, mínimo e
-                previsão após a movimentação.
-              </p>
-            </div>
-          )}
-        </aside>
+        <form onSubmit={(event) => { event.preventDefault(); if (!salvando) salvarMovimentacao() }} className="mt-5 space-y-4">
+          <div><label className={rotulo}>Produto</label><div className="relative"><div className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="caixa" size={18}/></div><input type="text" autoComplete="off" value={buscaProdutoMovimentacao} onChange={event => {setBuscaProdutoMovimentacao(event.target.value); atualizarCampo('produtoId',''); setMostrarSugestoesProduto(true)}} onFocus={()=>setMostrarSugestoesProduto(true)} placeholder="Selecione ou busque um produto" className={`${campo} pl-10 pr-10`}/><div className="pointer-events-none absolute right-3 top-[22px] text-slate-400"><Icone nome="chevron" size={17}/></div>{mostrarSugestoesProduto && <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">{produtosFiltradosMovimentacao.length ? produtosFiltradosMovimentacao.map(produto=><button type="button" key={produto.id} onClick={()=>selecionarProduto(produto)} className="w-full border-b border-slate-100 p-3 text-left last:border-0 hover:bg-blue-50"><p className="text-sm font-semibold text-slate-800">{produto.nome}</p><p className="text-xs text-slate-400">{produto.codigo || ''} · Estoque: {formatarNumero(produto.estoqueAtual)}</p></button>) : <p className="p-4 text-sm text-slate-500">Nenhum produto encontrado.</p>}</div>}</div></div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label className={rotulo}>Quantidade</label><div className="relative"><input type="number" min="1" step="1" required value={novaMovimentacao.quantidade} onChange={event=>atualizarCampo('quantidade',event.target.value)} placeholder="0" className={`${campo} pr-12`}/><span className="pointer-events-none absolute right-4 top-[22px] text-xs text-slate-400">un.</span></div></div><div><label className={rotulo}>Data da movimentação</label><input type="date" required value={novaMovimentacao.data} onChange={event=>atualizarCampo('data',event.target.value)} className={campo}/></div></div>
+          {novaMovimentacao.tipo === 'saida' && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{empresaUsaCanalVenda && <div><label className={rotulo}>Canal de venda</label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="carrinho" size={16}/></span><select value={novaMovimentacao.canalVenda} onChange={event=>atualizarCampo('canalVenda',event.target.value)} className={`${campo} pl-9`}><option value="">Sem canal</option>{canaisVenda.map(canal=><option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}</select></div></div>}{empresaEhSdPlasticos && <div><label className={rotulo}>Valor unitário personalizado <span className="font-normal text-slate-400">Opcional</span></label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-xs text-slate-400">R$</span><input type="text" inputMode="decimal" value={novaMovimentacao.valorUnitario} onChange={event=>atualizarCampo('valorUnitario',event.target.value)} placeholder={precoPadrao.toFixed(2).replace('.',',')} className={`${campo} pl-10`}/></div><p className="mt-1 text-[11px] text-slate-400">Vazio utiliza o preço padrão de {formatarMoeda(precoPadrao)}</p></div>}</div>}
+          <div><label className={rotulo}>Observação <span className="font-normal text-slate-400">Opcional</span></label><textarea rows={3} value={novaMovimentacao.observacao} onChange={event=>atualizarCampo('observacao',event.target.value)} placeholder="Adicione informações relevantes para esta movimentação..." className={`${campo} resize-y`}/></div>
+          {saidaMaiorQueEstoque && <p className="rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-700">A quantidade informada supera o estoque disponível.</p>}
+          <button type="submit" disabled={salvando || saidaMaiorQueEstoque} className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-blue-100 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><Icone nome="check" size={18}/>{salvando ? 'Salvando…' : `Confirmar ${novaMovimentacao.tipo}`}</button>
+        </form>
       </div>
+    </div>
 
-      <div className="mt-6 bg-white rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-6 py-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            <h3 className="text-xl font-bold text-slate-900">
-              Últimas movimentações
-            </h3>
-
-            <p className="mt-1 text-sm text-slate-500">
-              As 10 movimentações mais recentes. Para corrigir um lançamento,
-              use a opção de estorno.
-            </p>
-          </div>
-
-          <button
-            onClick={() =>
-              setMostrarHistoricoCompleto(!mostrarHistoricoCompleto)
-            }
-            className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
-          >
-            {mostrarHistoricoCompleto
-              ? 'Ocultar histórico completo'
-              : 'Ver histórico completo'}
-          </button>
-        </div>
-
-        {carregandoMovimentacoes ? (
-          <p className="px-5 py-8 text-center text-slate-500">
-            Carregando movimentações...
-          </p>
-        ) : (
-          <>
-            <TabelaMovimentacoes lista={movimentacoesRecentes} />
-            <CardsMovimentacoes lista={movimentacoesRecentes} />
-          </>
-        )}
-      </div>
-
-      {mostrarHistoricoCompleto && (
-        <div className="mt-6 bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-6 py-5 border-b border-slate-100">
-            <h3 className="text-xl font-bold text-slate-900">
-              Histórico completo
-            </h3>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Use os filtros e clique em buscar. A consulta retorna até 100
-              movimentações por vez.
-            </p>
-          </div>
-
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4 border-b border-slate-100">
-            <select
-              value={filtroProduto}
-              onChange={(event) => setFiltroProduto(event.target.value)}
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="">Todos os produtos</option>
-
-              {produtos.map((produto) => (
-                <option key={produto.id} value={produto.id}>
-                  {produto.nome}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={filtroTipo}
-              onChange={(event) => setFiltroTipo(event.target.value)}
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            >
-              <option value="">Todos os tipos</option>
-              <option value="entrada">Entrada</option>
-              <option value="saida">Saída</option>
-            </select>
-
-            {empresaUsaCanalVenda && (
-              <select
-                value={filtroCanalVenda}
-                onChange={(event) => setFiltroCanalVenda(event.target.value)}
-                aria-label="Filtrar por canal de venda"
-                className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                <option value="">Todos os canais</option>
-                {canaisVenda.map((canal) => (
-                  <option key={canal.valor} value={canal.valor}>
-                    {canal.nome}
-                  </option>
-                ))}
-                <option value="__sem_canal__">Não informado</option>
-              </select>
-            )}
-
-            <input
-              type="date"
-              value={dataInicial}
-              onChange={(event) => setDataInicial(event.target.value)}
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-
-            <input
-              type="date"
-              value={dataFinal}
-              onChange={(event) => setDataFinal(event.target.value)}
-              className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-
-            {filtroCanalVenda && filtroTipo === 'entrada' && (
-              <p className="md:col-span-2 xl:col-span-6 text-sm text-amber-700">
-                O filtro por canal se aplica somente às saídas. Selecione “Todos os tipos” ou “Saída”.
-              </p>
-            )}
-
-            <button
-              onClick={limparFiltrosHistorico}
-              className="rounded-xl bg-slate-100 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-200"
-            >
-              Limpar filtros
-            </button>
-
-            <button
-              onClick={buscarHistoricoCompleto}
-              disabled={carregandoHistoricoCompleto}
-              className="md:col-span-2 xl:col-span-6 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {carregandoHistoricoCompleto
-                ? 'Buscando histórico...'
-                : 'Buscar histórico'}
-            </button>
-          </div>
-
-          <div className="px-6 py-4 border-b border-slate-100">
-            <p className="text-sm text-slate-500">
-              {!historicoBuscado
-                ? 'Nenhuma busca realizada ainda.'
-                : `${historicoCompleto.length} movimentação(ões) encontrada(s).`}
-            </p>
-          </div>
-
-          {carregandoHistoricoCompleto ? (
-            <p className="px-5 py-8 text-center text-slate-500">
-              Carregando histórico completo...
-            </p>
-          ) : (
-            <>
-              <TabelaMovimentacoes lista={historicoCompleto} />
-              <CardsMovimentacoes lista={historicoCompleto} />
-            </>
-          )}
-        </div>
-      )}
-    </section>
-  )
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 lg:px-6"><div><h3 className="text-base font-bold text-slate-900">Histórico de movimentações</h3><p className="mt-1 text-xs text-slate-400">Acompanhe e filtre todas as operações</p></div><button type="button" onClick={()=>setFiltrosAvancados(!filtrosAvancados)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Icone nome="filtro" size={15}/>Filtros avançados</button></div>
+      <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row lg:px-6"><div className="relative min-w-0 flex-1"><span className="pointer-events-none absolute left-3 top-3 text-slate-400"><Icone nome="busca" size={17}/></span><input value={buscaHistorico} onChange={event=>{setBuscaHistorico(event.target.value);setPaginaHistorico(1)}} placeholder="Buscar produto..." className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500"/></div><select value={filtroTipo} onChange={event=>{setFiltroTipo(event.target.value);setMostrarHistoricoCompleto(true)}} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700"><option value="">Todos os tipos</option><option value="entrada">Entradas</option><option value="saida">Saídas</option></select><button type="button" onClick={()=>{setMostrarHistoricoCompleto(true);buscarHistoricoCompleto()}} disabled={carregandoHistoricoCompleto} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{carregandoHistoricoCompleto ? 'Buscando…' : 'Buscar histórico'}</button></div>
+      {filtrosAvancados && <div className="grid grid-cols-1 gap-3 border-t border-slate-100 bg-slate-50/50 px-5 py-4 sm:grid-cols-2 lg:grid-cols-5 lg:px-6"><select value={filtroProduto} onChange={event=>setFiltroProduto(event.target.value)} className={campo}><option value="">Todos os produtos</option>{produtos.map(produto=><option key={produto.id} value={produto.id}>{produto.nome}</option>)}</select>{empresaUsaCanalVenda && <select value={filtroCanalVenda} onChange={event=>setFiltroCanalVenda(event.target.value)} className={campo}><option value="">Todos os canais</option>{canaisVenda.map(canal=><option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}<option value="__sem_canal__">Não informado</option></select>}<input type="date" aria-label="Data inicial" value={dataInicial} onChange={event=>setDataInicial(event.target.value)} className={campo}/><input type="date" aria-label="Data final" value={dataFinal} onChange={event=>setDataFinal(event.target.value)} className={campo}/><button type="button" onClick={limparFiltrosHistorico} className="mt-2 rounded-xl bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700">Limpar filtros</button>{filtroCanalVenda && filtroTipo === 'entrada' && <p className="col-span-full text-xs text-amber-700">Canais de venda se aplicam somente às saídas.</p>}</div>}
+      {(carregandoMovimentacoes || carregandoHistoricoCompleto) ? <p className="p-8 text-center text-sm text-slate-500">Carregando movimentações…</p> : <HistoricoTabela/>}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 lg:px-6"><p className="text-xs text-slate-400">{historicoBuscado ? `Exibindo até 100 registros da busca · ${historicoFiltrado.length} carregados` : `Últimas ${historicoFiltrado.length} movimentações · use Buscar histórico para mais registros`}</p><div className="flex items-center gap-1"><button type="button" disabled={paginaAtual <= 1} onClick={()=>setPaginaHistorico(paginaAtual-1)} className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"><Icone nome="esquerda" size={16}/></button>{Array.from({length: Math.min(paginas,5)},(_,i)=>i+1).map(pagina=><button key={pagina} type="button" onClick={()=>setPaginaHistorico(pagina)} className={`h-8 w-8 rounded-lg text-xs font-semibold ${pagina === paginaAtual ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>{pagina}</button>)}<button type="button" disabled={paginaAtual >= paginas} onClick={()=>setPaginaHistorico(paginaAtual+1)} className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"><Icone nome="direita" size={16}/></button></div></div>
+    </div>
+  </section>
 }
 
 export default Movimentacoes
