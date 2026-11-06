@@ -233,17 +233,15 @@ function Relatorios({ empresaAtiva }) {
     .filter((item) => item.saidas > 0)
     .sort((a, b) => b.saidas - a.saidas)
     .map((item) => ({
+      produtoId: item.produtoId,
       nomeCompleto: item.produto,
-      nome:
-        item.produto.length > 18
-          ? `${item.produto.slice(0, 18)}...`
-          : item.produto,
       saidas: item.saidas,
     }))
 
-  const larguraGraficoVendas = Math.max(
-    900,
-    dadosGraficoMaisVendidos.length * 170
+  // Uma linha por produto, sem depender de nomes parecidos ou abreviados.
+  const alturaGraficoVendas = Math.max(300, dadosGraficoMaisVendidos.length * 54 + 48)
+  const nomesProdutosGrafico = new Map(
+    dadosGraficoMaisVendidos.map((item) => [item.produtoId, item.nomeCompleto])
   )
 
   function formatarCanalVenda(canal) {
@@ -267,12 +265,14 @@ function Relatorios({ empresaAtiva }) {
         ranking[chaveCanal] = {
           canal: nomeCanal,
           total: 0,
+          movimentacoes: 0,
           valorTotal: 0,
           produtos: {},
         }
       }
 
       ranking[chaveCanal].total += venda.quantidade
+      ranking[chaveCanal].movimentacoes += 1
       ranking[chaveCanal].valorTotal += venda.valorTotal
 
       if (!ranking[chaveCanal].produtos[venda.produtoId]) {
@@ -299,6 +299,69 @@ function Relatorios({ empresaAtiva }) {
     }))
     .sort((a, b) => b.total - a.total)
 
+  const formatarQuantidade = (valor) => Number(valor || 0).toLocaleString('pt-BR')
+  const totalUnidadesCanais = rankingCanaisVenda.reduce((total, canal) => total + canal.total, 0)
+  const totalMovimentacoesCanais = rankingCanaisVenda.reduce(
+    (total, canal) => total + canal.movimentacoes, 0
+  )
+  const coresCanais = ['#385cf6', '#14b8a6', '#94a3b8', '#f59e0b', '#a855f7', '#f43f5e']
+  const distribuicaoCanais = rankingCanaisVenda.map((canal, index) => ({
+    ...canal,
+    percentual: totalUnidadesCanais ? (canal.total / totalUnidadesCanais) * 100 : 0,
+    cor: coresCanais[index % coresCanais.length],
+  }))
+
+  function GraficoRoscaCanais() {
+    // O gráfico usa unidades movimentadas, não faturamento nem número de lançamentos.
+    const raio = 72
+    const circunferencia = 2 * Math.PI * raio
+    let posicaoAtual = 0
+
+    return (
+      <div className="flex flex-col items-center gap-5 sm:flex-row sm:justify-center lg:flex-col xl:flex-row">
+        <div className="relative h-52 w-52 shrink-0" role="img" aria-label={`Distribuição de ${formatarQuantidade(totalUnidadesCanais)} unidades por canal de venda`}>
+          <svg viewBox="0 0 200 200" className="h-full w-full" aria-hidden="true">
+            <circle cx="100" cy="100" r={raio} fill="none" stroke="#e2e8f0" strokeWidth="24" />
+            {distribuicaoCanais.map((canal) => {
+              const comprimento = (canal.percentual / 100) * circunferencia
+              const deslocamento = posicaoAtual
+              posicaoAtual += comprimento
+              return (
+                <circle
+                  key={canal.canal}
+                  cx="100"
+                  cy="100"
+                  r={raio}
+                  fill="none"
+                  stroke={canal.cor}
+                  strokeWidth="24"
+                  strokeDasharray={`${comprimento} ${circunferencia - comprimento}`}
+                  strokeDashoffset={-deslocamento}
+                  transform="rotate(-90 100 100)"
+                >
+                  <title>{`${canal.canal}: ${formatarQuantidade(canal.total)} unidades (${canal.percentual.toFixed(1)}%)`}</title>
+                </circle>
+              )
+            })}
+          </svg>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            <strong className="text-2xl font-extrabold tracking-tight text-slate-900">{formatarQuantidade(totalUnidadesCanais)}</strong>
+            <span className="mt-1 text-xs font-medium text-slate-500">unidades</span>
+          </div>
+        </div>
+        <div className="w-full min-w-0 max-w-xs space-y-3">
+          {distribuicaoCanais.map((canal) => (
+            <div key={canal.canal} className="flex items-center gap-3 text-sm">
+              <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: canal.cor }} />
+              <span className="min-w-0 flex-1 truncate font-medium text-slate-700" title={canal.canal}>{canal.canal}</span>
+              <strong className="shrink-0 tabular-nums text-slate-900">{canal.percentual.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   function StatusEstoque({ item }) {
     const baixoEstoque = item.estoqueAtual < item.estoqueMinimo
 
@@ -314,35 +377,6 @@ function Relatorios({ empresaAtiva }) {
       <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
         Normal
       </span>
-    )
-  }
-
-  function TickProdutoGrafico({ x, y, payload }) {
-    const texto = payload.value || ''
-    const partes = texto.split(' ')
-
-    const primeiraLinha = partes.slice(0, 2).join(' ')
-    const segundaLinha = partes.slice(2).join(' ')
-
-    return (
-      <g transform={`translate(${x},${y})`}>
-        <text
-          x={0}
-          y={0}
-          dy={16}
-          textAnchor="middle"
-          fill="#475569"
-          fontSize={11}
-        >
-          <tspan x={0}>{primeiraLinha}</tspan>
-
-          {segundaLinha && (
-            <tspan x={0} dy={14}>
-              {segundaLinha}
-            </tspan>
-          )}
-        </text>
-      </g>
     )
   }
 
@@ -450,87 +484,56 @@ function Relatorios({ empresaAtiva }) {
 
     y += 75
 
+    // O gráfico integra o PDF apenas da SD Plásticos.
     if (!empresaEhDega) {
-    adicionarTituloSecao('Gráfico de Vendas')
+      adicionarTituloSecao('Gráfico de Vendas')
 
-    if (dadosGraficoMaisVendidos.length === 0) {
-      pdf.setTextColor(71, 85, 105)
-      pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(10)
-      pdf.text('Nenhuma saída registrada no período selecionado.', margem, y)
-      y += 12
-    } else {
-      const dadosPdf = dadosGraficoMaisVendidos.slice(0, 6)
-      const alturaGrafico = 80
-      const larguraGrafico = larguraUtil
-      const xGrafico = margem
-      const yGrafico = y
-
-      const maiorValor = Math.max(...dadosPdf.map((item) => item.saidas))
-      const quantidadeBarras = dadosPdf.length
-      const espacamento = 10
-      const larguraBarra =
-        (larguraGrafico - espacamento * (quantidadeBarras - 1)) /
-        quantidadeBarras
-
-      pdf.setDrawColor(226, 232, 240)
-
-      for (let i = 0; i <= 4; i++) {
-        const yLinha = yGrafico + (alturaGrafico / 4) * i
-        pdf.line(xGrafico, yLinha, xGrafico + larguraGrafico, yLinha)
-      }
-
-      pdf.setDrawColor(148, 163, 184)
-      pdf.line(
-        xGrafico,
-        yGrafico + alturaGrafico,
-        xGrafico + larguraGrafico,
-        yGrafico + alturaGrafico
-      )
-
-      dadosPdf.forEach((item, index) => {
-        const alturaBarra = (item.saidas / maiorValor) * (alturaGrafico - 14)
-        const x = xGrafico + index * (larguraBarra + espacamento)
-        const yBarra = yGrafico + alturaGrafico - alturaBarra
-
-        pdf.setFillColor(37, 99, 235)
-        pdf.roundedRect(x, yBarra, larguraBarra, alturaBarra, 1.5, 1.5, 'F')
-
-        pdf.setTextColor(15, 23, 42)
-        pdf.setFont('helvetica', 'bold')
-        pdf.setFontSize(8)
-        pdf.text(String(item.saidas), x, yBarra - 2)
-
+      if (dadosGraficoMaisVendidos.length === 0) {
         pdf.setTextColor(71, 85, 105)
         pdf.setFont('helvetica', 'normal')
         pdf.setFontSize(10)
+        pdf.text('Nenhuma saída registrada no período selecionado.', margem, y)
+        y += 12
+      } else {
+        // Os seis mais vendidos, ordenados por quantidade, em barras horizontais.
+        const dadosPdf = dadosGraficoMaisVendidos.slice(0, 6)
+        const maiorValor = Math.max(...dadosPdf.map((item) => item.saidas), 1)
+        const alturaLinha = 17
+        const alturaTotal = dadosPdf.length * alturaLinha + 8
+        garantirEspaco(alturaTotal)
 
-        const larguraNome = Math.max(18, larguraBarra - 5)
+        const larguraRotulo = 68
+        const larguraBarras = larguraUtil - larguraRotulo - 28
+        const xBarras = margem + larguraRotulo
 
-        const nomeQuebrado = pdf.splitTextToSize(
-          item.nomeCompleto,
-          larguraNome
-        )
+        dadosPdf.forEach((item, index) => {
+          const yLinha = y + index * alturaLinha
+          const larguraBarra = (item.saidas / maiorValor) * larguraBarras
 
-        const linhasNome = nomeQuebrado.slice(0, 10)
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(9)
+          pdf.setTextColor(51, 65, 85)
+          const nome = pdf.splitTextToSize(item.nomeCompleto, larguraRotulo - 5)
+          pdf.text(nome.slice(0, 2), margem, yLinha + 4)
 
-        if (nomeQuebrado.length > 10) {
-          linhasNome[4] = `${linhasNome[4].slice(0, 12)}...`
-        }
+          pdf.setFillColor(226, 232, 240)
+          pdf.roundedRect(xBarras, yLinha + 1, larguraBarras, 7, 1.5, 1.5, 'F')
+          pdf.setFillColor(37, 99, 235)
+          pdf.roundedRect(xBarras, yLinha + 1, larguraBarra, 7, 1.5, 1.5, 'F')
 
-        linhasNome.forEach((linha, linhaIndex) => {
+          pdf.setFont('helvetica', 'bold')
+          pdf.setFontSize(9)
+          pdf.setTextColor(15, 23, 42)
           pdf.text(
-            linha,
-            x + larguraBarra / 2,
-            yGrafico + alturaGrafico + 7 + linhaIndex * 4.2,
-            { align: 'center' }
+            item.saidas.toLocaleString('pt-BR'),
+            margem + larguraUtil,
+            yLinha + 6.5,
+            { align: 'right' }
           )
         })
-      })
 
-      y += alturaGrafico + 50
-    }
-
+        y += alturaTotal + 8
+      }
     }
 
     adicionarTituloSecao('Produtos vendidos no período')
@@ -851,100 +854,154 @@ function Relatorios({ empresaAtiva }) {
           </div>
         )}
 
+        <div className={`mt-6 grid grid-cols-1 gap-5 ${empresaEhDega ? '' : '2xl:grid-cols-[minmax(0,1.65fr)_minmax(350px,1fr)]'}`}>
         {!empresaEhDega && (
-        <div
-          className={
-            gerandoPdf
-              ? 'mt-6 bg-white p-6'
-              : 'mt-6 bg-white rounded-2xl shadow-sm p-6 print:break-inside-avoid'
-          }
-        >
-          <div>
-            <h3 className="text-xl font-bold text-slate-900">
-              Gráfico de Vendas
-            </h3>
+          <div className="min-w-0 rounded-2xl bg-white p-6 shadow-sm print:break-inside-avoid">
+            <h3 className="text-xl font-bold text-slate-900">Produtos mais vendidos</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Produtos ordenados por quantidade de saídas · Role para baixo para ver todos.
+            </p>
 
-            {!gerandoPdf && dadosGraficoMaisVendidos.length > 5 && (
-              <p className="mt-1 text-xs text-slate-400">
-                Arraste para o lado para visualizar todos os produtos.
+            {carregandoRelatorio ? (
+              <div className="mt-6 flex h-40 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
+                Carregando gráfico...
+              </div>
+            ) : dadosGraficoMaisVendidos.length > 0 ? (
+              <div className="mt-6 max-h-[600px] overflow-auto rounded-xl border border-slate-100 bg-white">
+                <div className="min-w-[710px]" style={{ height: alturaGraficoVendas }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={dadosGraficoMaisVendidos}
+                      layout="vertical"
+                      margin={{ top: 20, right: 102, left: 10, bottom: 24 }}
+                      barCategoryGap="24%"
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                      <XAxis
+                        type="number"
+                        allowDecimals={false}
+                        tick={{ fill: '#475569', fontSize: 13 }}
+                        axisLine={{ stroke: '#cbd5e1' }}
+                        tickLine={false}
+                        tickFormatter={(value) => Number(value).toLocaleString('pt-BR')}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="produtoId"
+                        width={250}
+                        interval={0}
+                        tickLine={false}
+                        axisLine={false}
+                        tick={{ fill: '#334155', fontSize: 14, fontWeight: 500 }}
+                        tickFormatter={(id) => nomesProdutosGrafico.get(id) || id}
+                      />
+                      <Tooltip
+                        cursor={{ fill: '#eff6ff' }}
+                        formatter={(value) => [Number(value).toLocaleString('pt-BR'), 'Saídas']}
+                        labelFormatter={(id) => nomesProdutosGrafico.get(id) || ''}
+                        contentStyle={{
+                          borderRadius: '12px',
+                          border: '1px solid #e2e8f0',
+                          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                        }}
+                      />
+                      <Bar
+                        dataKey="saidas"
+                        name="Saídas"
+                        fill="#2563eb"
+                        radius={[0, 7, 7, 0]}
+                        maxBarSize={29}
+                        background={{ fill: '#f1f5f9', radius: 7 }}
+                        label={{
+                          position: 'right',
+                          fill: '#334155',
+                          fontSize: 13,
+                          fontWeight: 600,
+                          formatter: (value) => Number(value).toLocaleString('pt-BR'),
+                        }}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-6 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                Nenhuma saída registrada no período selecionado.
               </p>
             )}
           </div>
+        )}
 
-          <div
-            className={
-              gerandoPdf
-                ? 'mt-6 h-72'
-                : 'mt-6 h-96 overflow-x-auto overflow-y-hidden print:h-72 print:overflow-visible'
-            }
-          >
-            {carregandoRelatorio ? (
-              <div className="h-full flex items-center justify-center rounded-xl bg-slate-50 border border-dashed border-slate-300 px-4 text-center">
-                <p className="text-sm text-slate-500">Carregando gráfico...</p>
-              </div>
-            ) : dadosGraficoMaisVendidos.length > 0 ? (
-              <div
-                style={{
-                  width: gerandoPdf ? '100%' : `${larguraGraficoVendas}px`,
-                }}
-                className="h-full"
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={dadosGraficoMaisVendidos}
-                    margin={{ top: 20, right: 24, left: 0, bottom: 80 }}
-                    barCategoryGap="24%"
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-
-                    <XAxis
-                      dataKey="nome"
-                      interval={0}
-                      tick={<TickProdutoGrafico />}
-                      axisLine={{ stroke: '#cbd5e1' }}
-                      tickLine={false}
-                      height={80}
-                    />
-
-                    <YAxis
-                      tick={{ fill: '#475569', fontSize: 12 }}
-                      axisLine={{ stroke: '#cbd5e1' }}
-                      tickLine={false}
-                    />
-
-                    <Tooltip
-                      cursor={{ fill: '#eff6ff' }}
-                      formatter={(value) => [value, 'Saídas']}
-                      labelFormatter={(_, payload) =>
-                        payload?.[0]?.payload?.nomeCompleto || ''
-                      }
-                      contentStyle={{
-                        borderRadius: '12px',
-                        border: '1px solid #e2e8f0',
-                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                      }}
-                    />
-
-                    <Bar
-                      dataKey="saidas"
-                      name="Saídas"
-                      fill="#2563eb"
-                      radius={[8, 8, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="h-full flex items-center justify-center rounded-xl bg-slate-50 border border-dashed border-slate-300 px-4 text-center">
-                <p className="text-sm text-slate-500">
-                  Nenhuma saída registrada no período selecionado.
-                </p>
-              </div>
-            )}
-          </div>
+        <div className="min-w-0 rounded-2xl bg-white p-6 shadow-sm print:break-inside-avoid">
+          <h3 className="text-xl font-bold text-slate-900">Distribuição por canal</h3>
+          <p className="mt-1 text-sm text-slate-500">Participação de cada canal na quantidade de unidades de saída.</p>
+          {carregandoRelatorio ? (
+            <p className="mt-6 rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Carregando canais...</p>
+          ) : totalUnidadesCanais > 0 ? (
+            <div className="mt-5"><GraficoRoscaCanais /></div>
+          ) : (
+            <p className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+              Nenhuma saída encontrada para os filtros selecionados.
+            </p>
+          )}
+          <p className="mt-5 text-xs text-slate-400">Considera as saídas originais não estornadas dos produtos incluídos no relatório.</p>
+        </div>
         </div>
 
-        )}
+        <div className="mt-5 overflow-hidden rounded-2xl bg-white shadow-sm">
+          <div className="flex flex-col gap-1 border-b border-slate-100 px-6 py-5 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="text-xl font-bold text-slate-900">Detalhamento por canal</h3>
+              <p className="mt-1 text-sm text-slate-500">Consolidado por canal no período e nos filtros selecionados.</p>
+            </div>
+            <span className="text-sm font-medium text-slate-500">{formatarQuantidade(totalMovimentacoesCanais)} movimentações</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[650px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-6 py-4">Canal</th>
+                  <th className="px-5 py-4 text-right">Movimentações</th>
+                  <th className="px-5 py-4 text-right">Unidades</th>
+                  {!empresaEhDega && <th className="px-5 py-4 text-right">Valor estimado</th>}
+                  <th className="px-6 py-4 text-right">Participação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!carregandoRelatorio && distribuicaoCanais.map((canal) => (
+                  <tr key={canal.canal} className="border-t border-slate-100 hover:bg-slate-50/70">
+                    <td className="px-6 py-4 font-semibold text-slate-800">
+                      <span className="mr-3 inline-block h-3 w-3 rounded-sm align-middle" style={{ backgroundColor: canal.cor }} />
+                      {canal.canal}
+                    </td>
+                    <td className="px-5 py-4 text-right tabular-nums text-slate-600">{formatarQuantidade(canal.movimentacoes)}</td>
+                    <td className="px-5 py-4 text-right tabular-nums font-semibold text-slate-900">{formatarQuantidade(canal.total)}</td>
+                    {!empresaEhDega && <td className="px-5 py-4 text-right tabular-nums font-semibold text-slate-900">{formatarMoeda(canal.valorTotal)}</td>}
+                    <td className="px-6 py-4 text-right tabular-nums font-bold text-blue-700">{canal.percentual.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</td>
+                  </tr>
+                ))}
+                {!carregandoRelatorio && distribuicaoCanais.length === 0 && (
+                  <tr><td colSpan={empresaEhDega ? 4 : 5} className="px-6 py-8 text-center text-slate-500">Nenhuma movimentação encontrada.</td></tr>
+                )}
+                {carregandoRelatorio && (
+                  <tr><td colSpan={empresaEhDega ? 4 : 5} className="px-6 py-8 text-center text-slate-500">Carregando detalhamento...</td></tr>
+                )}
+              </tbody>
+              {!carregandoRelatorio && distribuicaoCanais.length > 0 && (
+                <tfoot className="border-t-2 border-slate-200 bg-slate-50 font-bold text-slate-900">
+                  <tr>
+                    <td className="px-6 py-4">Total</td>
+                    <td className="px-5 py-4 text-right">{formatarQuantidade(totalMovimentacoesCanais)}</td>
+                    <td className="px-5 py-4 text-right">{formatarQuantidade(totalUnidadesCanais)}</td>
+                    {!empresaEhDega && <td className="px-5 py-4 text-right">{formatarMoeda(distribuicaoCanais.reduce((total, canal) => total + canal.valorTotal, 0))}</td>}
+                    <td className="px-6 py-4 text-right">100%</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          {!empresaEhDega && <p className="border-t border-slate-100 px-6 py-3 text-xs text-slate-500">Valor estimado com base nos preços unitários atuais dos produtos. Não representa necessariamente o faturamento histórico.</p>}
+        </div>
 
         {!gerandoPdf && (
           <div className="mt-6 bg-white rounded-2xl shadow-sm overflow-hidden print:hidden">
