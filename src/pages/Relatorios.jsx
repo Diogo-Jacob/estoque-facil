@@ -31,16 +31,38 @@ function Relatorios({ empresaAtiva }) {
   const [dataInicial, setDataInicial] = useState(obterPrimeiroDiaDoMes())
   const [dataFinal, setDataFinal] = useState(obterDataLocal())
   const [buscaProduto, setBuscaProduto] = useState('')
+  const [canalSelecionado, setCanalSelecionado] = useState('')
   const [relatorioPorProduto, setRelatorioPorProduto] = useState([])
   const [vendasDetalhadas, setVendasDetalhadas] = useState([])
   const [carregandoRelatorio, setCarregandoRelatorio] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
+  const empresaEhDega = empresaAtiva?.nome?.trim().toLowerCase() === 'dega'
+  const canaisVenda = empresaEhDega
+    ? [
+        { valor: 'dega_moto_parts', nome: 'Dega Moto Parts' },
+        { valor: 'emplajoi', nome: 'Emplajoi' },
+        { valor: 'fecha_molde', nome: 'Fecha Molde' },
+        { valor: 'shopee', nome: 'Shopee' },
+      ]
+    : [
+        { valor: 'mercado_livre', nome: 'Mercado Livre' },
+        { valor: 'zeca', nome: 'Zeca' },
+      ]
+
+  const nomeCanalSelecionado = canalSelecionado === '__sem_canal__'
+    ? 'Não informado'
+    : canaisVenda.find((canal) => canal.valor === canalSelecionado)?.nome || 'Todos os canais'
+
+  // Evita carregar o canal de uma empresa ao mudar para outra.
+  useEffect(() => {
+    setCanalSelecionado('')
+  }, [empresaAtiva?.id])
 
   useEffect(() => {
     if (empresaAtiva?.id && dataInicial && dataFinal) {
       carregarRelatorio()
     }
-  }, [empresaAtiva, dataInicial, dataFinal, buscaProduto])
+  }, [empresaAtiva?.id, dataInicial, dataFinal, buscaProduto, canalSelecionado])
 
   async function carregarRelatorio() {
     if (!dataInicial || !dataFinal) return
@@ -54,11 +76,12 @@ function Relatorios({ empresaAtiva }) {
 
     setCarregandoRelatorio(true)
 
-    const { data, error } = await supabase.rpc('relatorio_produtos_periodo', {
+    const { data, error } = await supabase.rpc('relatorio_produtos_por_canal', {
       p_empresa_id: empresaAtiva.id,
       p_data_inicial: dataInicial,
       p_data_final: dataFinal,
       p_busca: buscaProduto.trim(),
+      p_canal_venda: canalSelecionado || null,
     })
 
     if (error) {
@@ -80,28 +103,50 @@ function Relatorios({ empresaAtiva }) {
       valorTotalVendido: Number(item.valor_total_vendido || 0),
     }))
 
-    const { data: vendas, error: erroVendas } = await supabase
-      .from('movimentacoes')
-      .select(`
-        produto_id,
-        quantidade,
-        canal_venda,
-        produtos!movimentacoes_produto_id_fkey (
-          nome,
-          valor_unitario
-        )
-      `)
-      .eq('empresa_id', empresaAtiva.id)
-      .eq('tipo', 'saida')
-      .gte('data_movimentacao', dataInicial)
-      .lte('data_movimentacao', dataFinal)
-      .or('estornada.eq.false,estornada.is.null')
-      .is('movimentacao_original_id', null)
+    // Paginação evita o limite padrão de 1000 registros por resposta do Supabase.
+    // Apenas saídas originais e não estornadas, como na função SQL.
+    const vendas = []
+    let erroVendas = null
+    const tamanhoPagina = 1000
+    for (let inicio = 0; ; inicio += tamanhoPagina) {
+      let consulta = supabase
+        .from('movimentacoes')
+        .select(`
+          id,
+          produto_id,
+          quantidade,
+          canal_venda,
+          produtos!movimentacoes_produto_id_fkey (
+            nome,
+            valor_unitario
+          )
+        `)
+        .eq('empresa_id', empresaAtiva.id)
+        .eq('tipo', 'saida')
+        .gte('data_movimentacao', dataInicial)
+        .lte('data_movimentacao', dataFinal)
+        .eq('estornada', false)
+        .is('movimentacao_original_id', null)
+        .order('id', { ascending: true })
+        .range(inicio, inicio + tamanhoPagina - 1)
+
+      if (canalSelecionado && canalSelecionado !== '__sem_canal__') {
+        consulta = consulta.eq('canal_venda', canalSelecionado)
+      }
+      // No caso de "Não informado", a filtragem final também cobre strings vazias/espaços.
+      const { data: pagina, error: erroPagina } = await consulta
+      if (erroPagina) {
+        erroVendas = erroPagina
+        break
+      }
+      vendas.push(...(pagina || []))
+      if (!pagina || pagina.length < tamanhoPagina) break
+    }
 
     if (erroVendas) {
       console.error('Erro ao carregar vendas por canal:', erroVendas)
       alert(erroVendas.message || 'Erro ao carregar vendas por canal.')
-      setRelatorioPorProduto(relatorioFormatado)
+      setRelatorioPorProduto([])
       setVendasDetalhadas([])
       setCarregandoRelatorio(false)
       return
@@ -112,7 +157,10 @@ function Relatorios({ empresaAtiva }) {
     )
 
     const vendasFormatadas = vendas
-      .filter((venda) => produtosPermitidos.has(venda.produto_id))
+      .filter((venda) =>
+        produtosPermitidos.has(venda.produto_id) &&
+        (canalSelecionado !== '__sem_canal__' || !String(venda.canal_venda || '').trim())
+      )
       .map((venda) => ({
         produtoId: venda.produto_id,
         produto: venda.produtos?.nome || 'Produto não encontrado',
@@ -197,13 +245,6 @@ function Relatorios({ empresaAtiva }) {
     900,
     dadosGraficoMaisVendidos.length * 170
   )
-
-  const canaisVenda = [
-    { valor: 'dega_moto_parts', nome: 'Dega Moto Parts' },
-    { valor: 'emplajoi', nome: 'Emplajoi' },
-    { valor: 'fecha_molde', nome: 'Fecha Molde' },
-    { valor: 'shopee', nome: 'Shopee' },
-  ]
 
   function formatarCanalVenda(canal) {
     if (!canal) return 'Não informado'
@@ -333,6 +374,7 @@ function Relatorios({ empresaAtiva }) {
 
     const titulo = 'Relatório'
     const periodo = `Período analisado: ${gerarTextoPeriodo()}`
+    const textoCanal = `Canal de venda: ${nomeCanalSelecionado}`
 
     pdf.setTextColor(15, 23, 42)
     pdf.setFont('helvetica', 'bold')
@@ -345,6 +387,8 @@ function Relatorios({ empresaAtiva }) {
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(10)
     pdf.text(periodo, margem, y)
+    y += 6
+    pdf.text(textoCanal, margem, y)
 
     y += 16
 
@@ -364,10 +408,10 @@ function Relatorios({ empresaAtiva }) {
             ? produtoMaisVendido.produto
             : 'Sem vendas',
       },
-      {
+      ...(!empresaEhDega ? [{
         titulo: 'Valor total vendido',
         valor: formatarMoeda(totalValorVendido),
-      },
+      }] : []),
     ]
 
     const larguraCard = larguraUtil / 2 - 3
@@ -406,6 +450,7 @@ function Relatorios({ empresaAtiva }) {
 
     y += 75
 
+    if (!empresaEhDega) {
     adicionarTituloSecao('Gráfico de Vendas')
 
     if (dadosGraficoMaisVendidos.length === 0) {
@@ -486,6 +531,8 @@ function Relatorios({ empresaAtiva }) {
       y += alturaGrafico + 50
     }
 
+    }
+
     adicionarTituloSecao('Produtos vendidos no período')
 
     if (rankingProdutosVendidos.length === 0) {
@@ -506,14 +553,16 @@ function Relatorios({ empresaAtiva }) {
       pdf.text('Qtd. saída', margem + larguraUtil - 42, y + 5.5, {
         align: 'right',
       })
-      pdf.text('Valor total', margem + larguraUtil - 3, y + 5.5, {
-        align: 'right',
-      })
+      if (!empresaEhDega) {
+        pdf.text('Valor total', margem + larguraUtil - 3, y + 5.5, {
+          align: 'right',
+        })
+      }
       y += 8
 
       rankingProdutosVendidos.forEach((item, index) => {
         garantirEspaco(9)
-        const linhasProduto = pdf.splitTextToSize(item.produto, larguraUtil - 82)
+        const linhasProduto = pdf.splitTextToSize(item.produto, empresaEhDega ? larguraUtil - 55 : larguraUtil - 82)
         const alturaLinha = Math.max(8, linhasProduto.length * 4 + 3)
 
         pdf.setDrawColor(226, 232, 240)
@@ -530,12 +579,14 @@ function Relatorios({ empresaAtiva }) {
         pdf.text(String(item.saidas), margem + larguraUtil - 42, y + 5.5, {
           align: 'right',
         })
-        pdf.text(
-          formatarMoeda(item.valorTotalVendido),
-          margem + larguraUtil - 3,
-          y + 5.5,
-          { align: 'right' }
-        )
+        if (!empresaEhDega) {
+          pdf.text(
+            formatarMoeda(item.valorTotalVendido),
+            margem + larguraUtil - 3,
+            y + 5.5,
+            { align: 'right' }
+          )
+        }
 
         y += alturaLinha
       })
@@ -564,7 +615,7 @@ function Relatorios({ empresaAtiva }) {
 
         pdf.setFontSize(9)
         pdf.text(
-          `Total: ${canal.total} | ${formatarMoeda(canal.valorTotal)}`,
+          empresaEhDega ? `Total: ${canal.total}` : `Total: ${canal.total} | ${formatarMoeda(canal.valorTotal)}`,
           margem + larguraUtil - 4,
           y + 5.5,
           { align: 'right' }
@@ -581,7 +632,7 @@ function Relatorios({ empresaAtiva }) {
           garantirEspaco(8)
           const linhasProduto = pdf.splitTextToSize(
             produto.produto,
-            larguraUtil - 72
+            empresaEhDega ? larguraUtil - 55 : larguraUtil - 72
           )
           const alturaLinha = Math.max(7, linhasProduto.length * 4 + 2)
 
@@ -598,12 +649,14 @@ function Relatorios({ empresaAtiva }) {
             y + 4.5,
             { align: 'right' }
           )
-          pdf.text(
-            formatarMoeda(produto.valorTotal),
-            margem + larguraUtil - 4,
-            y + 4.5,
-            { align: 'right' }
-          )
+          if (!empresaEhDega) {
+            pdf.text(
+              formatarMoeda(produto.valorTotal),
+              margem + larguraUtil - 4,
+              y + 4.5,
+              { align: 'right' }
+            )
+          }
 
           pdf.setDrawColor(241, 245, 249)
           pdf.line(
@@ -629,7 +682,7 @@ function Relatorios({ empresaAtiva }) {
 
       const pdf = gerarPdfRelatorio()
 
-      const nomeArquivo = `relatorio-estoque-${dataInicial}-a-${dataFinal}.pdf`
+      const nomeArquivo = `relatorio-estoque-${canalSelecionado || 'todos'}-${dataInicial}-a-${dataFinal}.pdf`
 
       pdf.save(nomeArquivo)
     } catch (error) {
@@ -662,7 +715,7 @@ function Relatorios({ empresaAtiva }) {
             <h2 className="text-3xl font-bold text-slate-900">Relatório</h2>
 
             <p className="mt-1 text-sm text-slate-500">
-              Período analisado: {gerarTextoPeriodo()}
+              Período analisado: {gerarTextoPeriodo()} · Canal: {nomeCanalSelecionado}
             </p>
           </div>
 
@@ -670,7 +723,7 @@ function Relatorios({ empresaAtiva }) {
             <div className="flex flex-col sm:flex-row gap-3 print:hidden">
               <button
                 onClick={salvarRelatorioPdf}
-                disabled={gerandoPdf}
+                disabled={gerandoPdf || carregandoRelatorio}
                 className="rounded-xl bg-slate-900 px-5 py-3 font-semibold text-white hover:bg-slate-700 disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 {gerandoPdf ? 'Gerando PDF...' : 'Salvar PDF'}
@@ -678,6 +731,7 @@ function Relatorios({ empresaAtiva }) {
 
               <button
                 onClick={imprimirRelatorio}
+                disabled={carregandoRelatorio}
                 className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
               >
                 Imprimir relatório
@@ -716,12 +770,12 @@ function Relatorios({ empresaAtiva }) {
             </div>
           )}
 
-          <div className="bg-white rounded-2xl shadow-sm p-5">
+          {!empresaEhDega && <div className="bg-white rounded-2xl shadow-sm p-5">
             <p className="text-sm text-slate-500">Valor total vendido</p>
             <strong className="mt-2 block whitespace-nowrap text-xl font-bold tracking-tight text-slate-900 xl:text-2xl">
               {carregandoRelatorio ? '...' : formatarMoeda(totalValorVendido)}
             </strong>
-          </div>
+          </div>}
 
           <div className="bg-white rounded-2xl shadow-sm p-5">
             <p className="text-sm text-slate-500">Produto mais vendido</p>
@@ -736,7 +790,7 @@ function Relatorios({ empresaAtiva }) {
         </div>
 
         {!gerandoPdf && (
-          <div className="mt-6 bg-white rounded-2xl shadow-sm p-5 grid grid-cols-1 md:grid-cols-3 gap-4 print:hidden">
+          <div className="mt-6 bg-white rounded-2xl shadow-sm p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 print:hidden">
             <div>
               <label className="mb-1 block text-sm font-semibold text-slate-600">
                 Data inicial
@@ -777,9 +831,27 @@ function Relatorios({ empresaAtiva }) {
                 className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-slate-600">
+                Canal de venda
+              </label>
+              <select
+                value={canalSelecionado}
+                onChange={(event) => setCanalSelecionado(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="">Todos os canais</option>
+                {canaisVenda.map((canal) => (
+                  <option key={canal.valor} value={canal.valor}>{canal.nome}</option>
+                ))}
+                <option value="__sem_canal__">Não informado</option>
+              </select>
+            </div>
           </div>
         )}
 
+        {!empresaEhDega && (
         <div
           className={
             gerandoPdf
@@ -872,6 +944,8 @@ function Relatorios({ empresaAtiva }) {
           </div>
         </div>
 
+        )}
+
         {!gerandoPdf && (
           <div className="mt-6 bg-white rounded-2xl shadow-sm overflow-hidden print:hidden">
             <div className="px-6 py-5 border-b border-slate-100">
@@ -898,7 +972,7 @@ function Relatorios({ empresaAtiva }) {
                         <th className="px-5 py-4">Categoria</th>
                         <th className="px-5 py-4">Entradas</th>
                         <th className="px-5 py-4">Saídas</th>
-                        <th className="px-5 py-4">Valor total</th>
+                        {!empresaEhDega && <th className="px-5 py-4">Valor total</th>}
                         <th className="px-5 py-4">Estoque atual</th>
                         <th className="px-5 py-4">Status</th>
                       </tr>
@@ -926,9 +1000,9 @@ function Relatorios({ empresaAtiva }) {
                             {item.saidas}
                           </td>
 
-                          <td className="px-5 py-4 font-semibold text-slate-900">
+                          {!empresaEhDega && <td className="px-5 py-4 font-semibold text-slate-900">
                             {formatarMoeda(item.valorTotalVendido)}
-                          </td>
+                          </td>}
 
                           <td className="px-5 py-4 text-slate-600">
                             {item.estoqueAtual}
@@ -943,7 +1017,7 @@ function Relatorios({ empresaAtiva }) {
                       {relatorioPorProduto.length === 0 && (
                         <tr>
                           <td
-                            colSpan="7"
+                            colSpan={empresaEhDega ? 6 : 7}
                             className="px-5 py-8 text-center text-slate-500"
                           >
                             Nenhum produto encontrado no relatório.
@@ -989,12 +1063,12 @@ function Relatorios({ empresaAtiva }) {
                           </p>
                         </div>
 
-                        <div className="rounded-xl bg-slate-50 p-3">
+                        {!empresaEhDega && <div className="rounded-xl bg-slate-50 p-3">
                           <p className="text-xs text-slate-500">Valor</p>
                           <p className="text-sm font-bold text-slate-900">
                             {formatarMoeda(item.valorTotalVendido)}
                           </p>
-                        </div>
+                        </div>}
 
                         <div className="rounded-xl bg-slate-50 p-3">
                           <p className="text-xs text-slate-500">Estoque</p>
