@@ -1,10 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../services/supabase'
 
 const EMPRESA_SD = 'b7360df7-24af-4372-a7fb-5919d7a55b3e'
 const COMPOSICAO_VAZIA = {
   pesoGramas: '', materiaPrimaId: '', embalagemId: '', pecasPorEmbalagem: '1',
   pigmentoId: '', percentualPigmento: '',
+}
+
+
+// Componentes estáveis: não são recriados a cada renderização da página.
+function StatusProduto({ produto }) {
+  if (!produto.ativo) return <span className="efp-status efp-inativo"><i />Inativo</span>
+  if (Number(produto.estoqueAtual || 0) === 0) return <span className="efp-status efp-zerado"><i />Sem estoque</span>
+  if (Number(produto.estoqueAtual || 0) < Number(produto.estoqueMinimo || 0)) return <span className="efp-status efp-baixo"><i />Estoque baixo</span>
+  return <span className="efp-status efp-normal"><i />Normal</span>
+}
+
+function MenuAcoes({ produto, menuAbertoProdutoId, onAlternarMenu, onEditar, onAlterarStatus }) {
+  return <div className="efp-menu-anchor">
+    <button type="button" className="efp-more" aria-label={`Opções de ${produto.nome}`} onClick={() => onAlternarMenu(produto.id)}>•••</button>
+    {menuAbertoProdutoId === produto.id && <div className="efp-dropdown efp-action-dropdown">
+      <button type="button" onClick={() => onEditar(produto)}>Editar produto</button>
+      <button type="button" onClick={() => onAlterarStatus(produto, !produto.ativo)}>{produto.ativo ? 'Inativar produto' : 'Reativar produto'}</button>
+    </div>}
+  </div>
 }
 
 function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
@@ -73,7 +92,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   }).sort((a, b) => ordenacao === 'nome' ? a.nome.localeCompare(b.nome, 'pt-BR') : ordenacao === 'estoque' ? Number(a.estoqueAtual) - Number(b.estoqueAtual) : ordenacao === 'codigo' ? String(a.codigo).localeCompare(String(b.codigo), 'pt-BR') : 0)
 
   // Consultas apenas de leitura, sempre limitadas à empresa ativa.
-  async function carregarHistoricoAjustes(empresaId = empresaAtiva?.id) {
+  const carregarHistoricoAjustes = useCallback(async (empresaId) => {
     if (!empresaId) return
 
     const requisicao = ++historicoRequisicao.current
@@ -102,44 +121,57 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
       setHistoricoAjustes(data || [])
     }
     setCarregandoHistorico(false)
-  }
+  }, [])
 
   useEffect(() => {
-    // Invalida consultas anteriores e oculta dados ao trocar de empresa.
+    // Invalida respostas antigas antes de consultar o histórico da nova empresa.
     historicoRequisicao.current += 1
-    setHistoricoAjustes([])
-    setErroHistorico('')
-    setCarregandoHistorico(false)
-    if (mostrarHistoricoAjustes && empresaAtiva?.id) {
-      carregarHistoricoAjustes(empresaAtiva.id)
-    }
-  }, [empresaAtiva?.id, mostrarHistoricoAjustes])
+    let ativo = true
+    const empresaId = empresaAtiva?.id
+    // O agendamento evita atualizações síncronas de estado no corpo do efeito.
+    queueMicrotask(() => {
+      if (!ativo) return
+      setHistoricoAjustes([])
+      setErroHistorico('')
+      setCarregandoHistorico(false)
+      if (mostrarHistoricoAjustes && empresaId) {
+        void carregarHistoricoAjustes(empresaId)
+      }
+    })
+    return () => { ativo = false; historicoRequisicao.current += 1 }
+  }, [empresaAtiva?.id, mostrarHistoricoAjustes, carregarHistoricoAjustes])
 
   useEffect(() => {
     let ativo = true
     composicaoRequisicao.current += 1
-    setInsumos([])
-    setErroInsumos('')
-    setFormComposicao({ ...COMPOSICAO_VAZIA })
-    setComposicaoExistente(false)
-    setComposicaoAlterada(false)
-    setCarregandoComposicao(false)
-    setErroComposicao('')
-    setAbaFormulario('geral')
-    setMostrarFormulario(false)
-    if (!empresaSd) return () => { ativo = false }
-    setCarregandoInsumos(true)
-    void (async () => {
-      const { data, error } = await supabase.from('insumos')
-        .select('id,nome,categoria,unidade,custo_unitario,ativo')
-        .eq('empresa_id', EMPRESA_SD).eq('ativo', true).order('nome')
+    // Ao trocar de empresa, invalida imediatamente as consultas antigas.
+    // A limpeza visual é agendada para evitar renderizações em cascata.
+    queueMicrotask(() => {
       if (!ativo) return
-      setInsumos(data || [])
-      setErroInsumos(error ? 'Não foi possível carregar o catálogo de insumos.' : '')
-      setCarregandoInsumos(false)
-    })()
-    return () => { ativo = false }
-  }, [empresaAtiva?.id])
+      setInsumos([])
+      setErroInsumos('')
+      setFormComposicao({ ...COMPOSICAO_VAZIA })
+      setComposicaoExistente(false)
+      setComposicaoAlterada(false)
+      setCarregandoComposicao(false)
+      setErroComposicao('')
+      setAbaFormulario('geral')
+      setMostrarFormulario(false)
+      setCarregandoInsumos(empresaSd)
+    })
+    if (empresaSd) {
+      void (async () => {
+        const { data, error } = await supabase.from('insumos')
+          .select('id,nome,categoria,unidade,custo_unitario,ativo')
+          .eq('empresa_id', EMPRESA_SD).eq('ativo', true).order('nome')
+        if (!ativo) return
+        setInsumos(error ? [] : (data || []))
+        setErroInsumos(error ? 'Não foi possível carregar o catálogo de insumos.' : '')
+        setCarregandoInsumos(false)
+      })()
+    }
+    return () => { ativo = false; composicaoRequisicao.current += 1 }
+  }, [empresaAtiva?.id, empresaSd])
 
   async function carregarComposicao(produtoId) {
     const requisicao = ++composicaoRequisicao.current
@@ -408,7 +440,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
 
         if (mostrarHistoricoAjustes) {
           // Não bloqueia o salvamento enquanto o histórico é atualizado.
-          void carregarHistoricoAjustes()
+          void carregarHistoricoAjustes(empresaAtiva?.id)
         }
 
         // Evita repetir um ajuste já concluído caso a edição cadastral falhe.
@@ -555,26 +587,9 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
     setMenuAbertoProdutoId(menuAbertoProdutoId === id ? null : id)
   }
 
-  function StatusProduto({ produto }) {
-    if (!produto.ativo) return <span className="efp-status efp-inativo"><i />Inativo</span>
-    if (Number(produto.estoqueAtual || 0) === 0) return <span className="efp-status efp-zerado"><i />Sem estoque</span>
-    if (Number(produto.estoqueAtual || 0) < Number(produto.estoqueMinimo || 0)) return <span className="efp-status efp-baixo"><i />Estoque baixo</span>
-    return <span className="efp-status efp-normal"><i />Normal</span>
-  }
-
   const numFormat = (v) => Number(v || 0).toLocaleString('pt-BR')
   const numPreco = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 6 })
   const iconePacote = <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="m12 2 8.5 4.8v10.4L12 22l-8.5-4.8V6.8L12 2Z"/><path d="m3.5 6.8 8.5 4.9 8.5-4.9M12 11.7V22"/><path d="m8 4.3 8.4 4.9"/></svg>
-
-  function MenuAcoes({ produto }) {
-    return <div className="efp-menu-anchor">
-      <button type="button" className="efp-more" aria-label={`Opções de ${produto.nome}`} onClick={() => alternarMenuProduto(produto.id)}>•••</button>
-      {menuAbertoProdutoId === produto.id && <div className="efp-dropdown efp-action-dropdown">
-        <button type="button" onClick={() => abrirEdicao(produto)}>Editar produto</button>
-        <button type="button" onClick={() => alterarStatusProduto(produto, !produto.ativo)}>{produto.ativo ? 'Inativar produto' : 'Reativar produto'}</button>
-      </div>}
-    </div>
-  }
 
   const cssProdutos = `
     .efp{--pc-bg:#f4f6fb;--pc-surface:#ffffff;--pc-text:#172744;--pc-muted:#8391a9;--pc-border:#e0e8f3;--pc-soft:#f7f9fd;--pc-blue:#3261f4;--pc-hover:#f6f9ff;color:var(--pc-text);font-family:inherit;}
@@ -1073,7 +1088,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
                   <td>{numFormat(produto.estoqueMinimo)} un.</td>
                   <td>{empresaSd ? numPreco(produto.valorUnitario) : '—'}</td>
                   <td><StatusProduto produto={produto}/></td>
-                  <td><MenuAcoes produto={produto}/></td>
+                  <td><MenuAcoes produto={produto} menuAbertoProdutoId={menuAbertoProdutoId} onAlternarMenu={alternarMenuProduto} onEditar={abrirEdicao} onAlterarStatus={alterarStatusProduto}/></td>
                 </tr>
               )}
             </tbody>
@@ -1084,7 +1099,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
             <div key={produto.id} className="efp-mobile-card">
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
                 <div className="efp-namecell"><span className="efp-package">{iconePacote}</span><div><div className="efp-productname">{produto.nome}</div><div className="efp-productcode">{produto.codigo}{produto.emProducao ? ' · Em produção' : ''}</div></div></div>
-                <MenuAcoes produto={produto}/>
+                <MenuAcoes produto={produto} menuAbertoProdutoId={menuAbertoProdutoId} onAlternarMenu={alternarMenuProduto} onEditar={abrirEdicao} onAlterarStatus={alterarStatusProduto}/>
               </div>
               <div className="efp-mobile-grid"><div className="efp-mobile-metric"><small>Estoque</small><strong>{numFormat(produto.estoqueAtual)} un.</strong></div><div className="efp-mobile-metric"><small>Mínimo</small><strong>{numFormat(produto.estoqueMinimo)} un.</strong></div><div className="efp-mobile-metric"><small>Valor</small><strong>{empresaSd ? numPreco(produto.valorUnitario) : '—'}</strong></div></div>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginTop:13}}><span style={{fontSize:11,color:'var(--pc-muted)'}}>{produto.categoria}</span><StatusProduto produto={produto}/></div>
@@ -1105,7 +1120,7 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
             {mostrarHistoricoAjustes && (
               <button
                 type="button"
-                onClick={() => carregarHistoricoAjustes()}
+                onClick={() => carregarHistoricoAjustes(empresaAtiva?.id)}
                 disabled={carregandoHistorico || !empresaAtiva?.id}
                 className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >

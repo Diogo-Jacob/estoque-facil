@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../services/supabase'
 import Produtos from './Produtos'
 import Movimentacoes from './Movimentacoes'
@@ -49,6 +49,13 @@ function IconeNav({ nome, tamanho = 20, className = '' }) {
   )
 }
 
+function obterDataLocal(data = new Date()) {
+  const ano = data.getFullYear()
+  const mes = String(data.getMonth() + 1).padStart(2, '0')
+  const dia = String(data.getDate()).padStart(2, '0')
+  return `${ano}-${mes}-${dia}`
+}
+
 function Dashboard({
   usuarioLogado,
   empresasUsuario,
@@ -66,8 +73,11 @@ function Dashboard({
   const [arrastandoId, setArrastandoId] = useState(null)
   const [destinoId, setDestinoId] = useState(null)
   const arrasteRef = useRef(null)
-  const [fluxo30, setFluxo30] = useState([])
-  const [despesas30, setDespesas30] = useState([])
+  const requisicaoProdutos = useRef(0)
+  const requisicaoMovimentacoes = useRef(0)
+  const requisicaoResumo = useRef(0)
+  const [fluxoMes, setFluxoMes] = useState([])
+  const [despesasMes, setDespesasMes] = useState([])
   const [carregandoIndicadores, setCarregandoIndicadores] = useState(false)
   const [erroIndicadores, setErroIndicadores] = useState('')
   const [dadosIncompletos, setDadosIncompletos] = useState(false)
@@ -84,15 +94,6 @@ function Dashboard({
   const empresaEhSD = empresaAtiva?.nome?.trim().toLocaleLowerCase('pt-BR') === 'sd plásticos'
   const paginasPermitidas = NAV_TODAS.filter((item) => !item.exclusivoSD || empresaEhSD)
   const iniciais = (usuarioLogado?.nome || 'Usuário').trim().split(/\s+/).slice(0, 2).map((parte) => parte[0]?.toUpperCase()).join('')
-
-  useEffect(() => {
-    if (!empresaEhSD && (telaAtual === 'despesas' || telaAtual === 'insumos')) {
-      setTelaAtual('dashboard')
-    }
-    setMenuMobileAberto(false)
-    setSeletorEmpresaAberto(false)
-    setMostrarTodosAlertas(false)
-  }, [empresaAtiva?.id, empresaEhSD, telaAtual])
 
   useEffect(() => {
     try { window.localStorage.setItem('estoquefacil-modo-escuro', String(modoEscuro)) } catch { /* Armazenamento indisponível */ }
@@ -128,44 +129,31 @@ function Dashboard({
     produtoMaisVendidoHoje: null,
   })
 
-  useEffect(() => {
-    if (empresaAtiva?.id) {
-      setMostrarTodosProdutosDashboard(false)
-      setBuscaProdutoDashboard('')
-      setOrganizandoEstoque(false)
-      setErroOrdem('')
-      arrasteRef.current = null
-      setArrastandoId(null)
-      setDestinoId(null)
-      carregarProdutos()
-      carregarMovimentacoes()
-      carregarResumoDashboard()
-    }
-  }, [empresaAtiva])
-
-  // Dados dos últimos 30 dias: consultas paginadas para não truncar no limite de 1.000 linhas.
+  // Mês civil atual: consultas paginadas para não truncar no limite de 1.000 linhas.
   useEffect(() => {
     if (!empresaAtiva?.id || telaAtual !== 'dashboard') return
     let cancelado = false
     async function atualizarIndicadores() {
       setCarregandoIndicadores(true)
       setErroIndicadores('')
-      setFluxo30([])
-      setDespesas30([])
+      setFluxoMes([])
+      setDespesasMes([])
       setDadosIncompletos(false)
       try {
-        const inicio = new Date()
-        inicio.setHours(12, 0, 0, 0)
-        inicio.setDate(inicio.getDate() - 29)
-        const inicioISO = `${inicio.getFullYear()}-${String(inicio.getMonth() + 1).padStart(2, '0')}-${String(inicio.getDate()).padStart(2, '0')}`
+        const hoje = obterDataLocal()
+        const inicioISO = `${hoje.slice(0, 7)}-01`
+        // Garante os 7 dias completos no gráfico, inclusive na virada de mês.
+        const seteDiasAtras = new Date()
+        seteDiasAtras.setDate(seteDiasAtras.getDate() - 6)
+        const inicioMovimentosISO = [inicioISO, obterDataLocal(seteDiasAtras)].sort()[0]
         const movimentos = []
         let truncado = false
         for (let posicao = 0; posicao < 20000; posicao += 1000) {
           const { data, error } = await supabase.from('movimentacoes')
             .select('id, tipo, quantidade, data_movimentacao, valor_unitario, produto_id, estornada, movimentacao_original_id')
             .eq('empresa_id', empresaAtiva.id)
-            .gte('data_movimentacao', inicioISO)
-            .lte('data_movimentacao', obterDataLocal())
+            .gte('data_movimentacao', inicioMovimentosISO)
+            .lte('data_movimentacao', hoje)
             .eq('estornada', false)
             .is('movimentacao_original_id', null)
             .order('data_movimentacao', { ascending: false })
@@ -177,16 +165,16 @@ function Dashboard({
           if (posicao === 19000) truncado = true
         }
         if (cancelado) return
-        setFluxo30(movimentos)
+        setFluxoMes(movimentos)
         setDadosIncompletos(truncado)
-        if (empresaAtiva.nome?.trim().toLocaleLowerCase('pt-BR') === 'sd plásticos') {
+        if (empresaEhSD) {
           const despesas = []
           for (let posicao = 0; posicao < 10000; posicao += 1000) {
             const { data, error } = await supabase.from('despesas')
               .select('id, valor, data_despesa')
               .eq('empresa_id', empresaAtiva.id)
               .gte('data_despesa', inicioISO)
-              .lte('data_despesa', obterDataLocal())
+              .lte('data_despesa', hoje)
               .order('data_despesa', { ascending: false })
               .order('id', { ascending: true })
               .range(posicao, posicao + 999)
@@ -195,7 +183,7 @@ function Dashboard({
             if (!data || data.length < 1000) break
             if (posicao === 9000 && !cancelado) setDadosIncompletos(true)
           }
-          if (!cancelado) setDespesas30(despesas)
+          if (!cancelado) setDespesasMes(despesas)
         }
       } catch (erro) {
         if (!cancelado) { console.error('Erro ao carregar indicadores da Visão geral:', erro); setErroIndicadores('Não foi possível carregar todos os indicadores do período.') }
@@ -203,20 +191,25 @@ function Dashboard({
         if (!cancelado) setCarregandoIndicadores(false)
       }
     }
-    atualizarIndicadores()
+    // O carregamento começa em uma tarefa assíncrona, não durante o corpo do efeito.
+    queueMicrotask(() => { if (!cancelado) void atualizarIndicadores() })
     return () => { cancelado = true }
-  }, [empresaAtiva?.id, telaAtual])
+  }, [empresaAtiva?.id, empresaEhSD, telaAtual])
 
-  async function carregarProdutos() {
+  const carregarProdutos = useCallback(async () => {
+    const empresaId = empresaAtiva?.id
+    if (!empresaId) return
+    const pedido = ++requisicaoProdutos.current
     setCarregandoProdutos(true)
 
     const { data, error } = await supabase
       .from('produtos')
       .select('*')
-      .eq('empresa_id', empresaAtiva.id)
+      .eq('empresa_id', empresaId)
       .order('ordem_exibicao', { ascending: true })
       .order('nome', { ascending: true })
 
+    if (pedido !== requisicaoProdutos.current) return
     if (error) {
       console.error('Erro ao carregar produtos:', error)
       alert('Erro ao carregar produtos.')
@@ -241,9 +234,12 @@ function Dashboard({
 
     setProdutos(produtosFormatados)
     setCarregandoProdutos(false)
-  }
+  }, [empresaAtiva?.id])
 
-  async function carregarMovimentacoes() {
+  const carregarMovimentacoes = useCallback(async () => {
+    const empresaId = empresaAtiva?.id
+    if (!empresaId) return
+    const pedido = ++requisicaoMovimentacoes.current
     setCarregandoMovimentacoes(true)
 
     const { data, error } = await supabase
@@ -254,11 +250,12 @@ function Dashboard({
           nome
         )
       `)
-      .eq('empresa_id', empresaAtiva.id)
+      .eq('empresa_id', empresaId)
       .order('data_movimentacao', { ascending: false })
       .order('criada_em', { ascending: false })
       .limit(10)
 
+    if (pedido !== requisicaoMovimentacoes.current) return
     if (error) {
       console.error('Erro ao carregar movimentações:', error)
       alert('Erro ao carregar movimentações.')
@@ -285,19 +282,12 @@ function Dashboard({
 
     setMovimentacoes(movimentacoesFormatadas)
     setCarregandoMovimentacoes(false)
-  }
+  }, [empresaAtiva?.id])
 
-  function obterDataLocal(data = new Date()) {
-    const ano = data.getFullYear()
-    const mes = String(data.getMonth() + 1).padStart(2, '0')
-    const dia = String(data.getDate()).padStart(2, '0')
-
-    return `${ano}-${mes}-${dia}`
-  }
-
-  async function carregarResumoDashboard() {
-    if (!empresaAtiva?.id) return
-
+  const carregarResumoDashboard = useCallback(async () => {
+    const empresaId = empresaAtiva?.id
+    if (!empresaId) return
+    const pedido = ++requisicaoResumo.current
     setCarregandoResumoDashboard(true)
 
     const hoje = obterDataLocal()
@@ -312,12 +302,13 @@ function Dashboard({
           nome
         )
       `)
-      .eq('empresa_id', empresaAtiva.id)
+      .eq('empresa_id', empresaId)
       .eq('tipo', 'saida')
       .eq('data_movimentacao', hoje)
       .or('estornada.eq.false,estornada.is.null')
       .is('movimentacao_original_id', null)
 
+    if (pedido !== requisicaoResumo.current) return
     if (error) {
       console.error('Erro ao carregar resumo da dashboard:', error)
       setResumoDashboard({
@@ -362,7 +353,37 @@ function Dashboard({
     })
 
     setCarregandoResumoDashboard(false)
-  }
+  }, [empresaAtiva?.id])
+
+  // Troca de empresa: descarta as respostas pendentes e reinicializa apenas a UI.
+  useEffect(() => {
+    let ativo = true
+    const empresaId = empresaAtiva?.id
+    queueMicrotask(() => {
+      if (!ativo) return
+      setMostrarTodosProdutosDashboard(false)
+      setBuscaProdutoDashboard('')
+      setOrganizandoEstoque(false)
+      setErroOrdem('')
+      setArrastandoId(null)
+      setDestinoId(null)
+      setMenuMobileAberto(false)
+      setSeletorEmpresaAberto(false)
+      setMostrarTodosAlertas(false)
+      arrasteRef.current = null
+      if (empresaId) {
+        void carregarProdutos()
+        void carregarMovimentacoes()
+        void carregarResumoDashboard()
+      }
+    })
+    return () => {
+      ativo = false
+      requisicaoProdutos.current += 1
+      requisicaoMovimentacoes.current += 1
+      requisicaoResumo.current += 1
+    }
+  }, [empresaAtiva?.id, carregarProdutos, carregarMovimentacoes, carregarResumoDashboard])
 
   const produtosAtivos = produtos
     .filter((produto) => produto.ativo)
@@ -376,10 +397,6 @@ function Dashboard({
 
       return a.nome.localeCompare(b.nome, 'pt-BR')
     })
-
-  const produtosEmProducao = produtosAtivos.filter(
-    (produto) => produto.emProducao
-  )
 
   const produtosFiltradosDashboard = produtosAtivos.filter((produto) => {
     const busca = buscaProdutoDashboard.toLowerCase().trim()
@@ -397,17 +414,6 @@ function Dashboard({
   const produtosDashboard = (mostrarTodosProdutosDashboard || organizandoEstoque)
     ? produtosOrdenadosDashboard
     : produtosOrdenadosDashboard.slice(0, 10)
-
-  const produtosBaixoEstoque = produtosAtivos.filter(
-    (produto) => produto.estoqueAtual < produto.estoqueMinimo
-  )
-
-  const movimentacoesValidas = movimentacoes.filter(
-    (movimentacao) =>
-      !movimentacao.estornada && !movimentacao.movimentacaoOriginalId
-  )
-
-  const ultimasMovimentacoes = [...movimentacoesValidas].slice(0, 5)
 
   function mudarTela(tela) {
     if (!paginasPermitidas.some((item) => item.id === tela)) return
@@ -518,26 +524,6 @@ function Dashboard({
     if (origem !== destino) moverProduto(origem, destino)
   }
 
-  function formatarDataBrasil(data) {
-    if (!data) return '-'
-
-    const [ano, mes, dia] = data.split('-')
-
-    return `${dia}/${mes}/${ano}`
-  }
-
-  function estiloBotaoMenu(tela) {
-    return telaAtual === tela
-      ? 'rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white'
-      : 'rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100'
-  }
-
-  function estiloBotaoMenuMobile(tela) {
-    return telaAtual === tela
-      ? 'rounded-xl bg-blue-50 px-2 py-2 text-xs font-bold text-blue-700'
-      : 'rounded-xl px-2 py-2 text-xs font-semibold text-slate-500'
-  }
-
   function renderizarConteudo() {
     if (telaAtual === 'despesas' && empresaEhSD) {
       return <Despesas empresaAtiva={empresaAtiva} />
@@ -576,7 +562,6 @@ function Dashboard({
 
     const formatarNumero = (valor) => Number(valor || 0).toLocaleString('pt-BR')
     const formatarMoeda = (valor) => Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-    const estoqueTotal = produtosAtivos.reduce((total, produto) => total + Number(produto.estoqueAtual || 0), 0)
     const estoqueCritico = produtosAtivos.filter((produto) => Number(produto.estoqueAtual || 0) <= Number(produto.estoqueMinimo || 0))
     const listaEstoque = produtosDashboard
     const agora = new Date()
@@ -587,7 +572,7 @@ function Dashboard({
       return { dia, diaSemana, entradas: 0, saidas: 0 }
     })
     const mapaDias = new Map(dias.map((dia) => [dia.dia, dia]))
-    fluxo30.forEach((movimento) => {
+    fluxoMes.forEach((movimento) => {
       const dia = mapaDias.get(movimento.data_movimentacao)
       if (!dia) return
       if (movimento.tipo === 'entrada') dia.entradas += Number(movimento.quantidade || 0)
@@ -595,11 +580,17 @@ function Dashboard({
     })
     const maiorMovimento = Math.max(1, ...dias.flatMap((dia) => [dia.entradas, dia.saidas]))
     const precoAtualPorProduto = new Map(produtos.map((produto) => [produto.id, Number(produto.valorUnitario || 0)]))
-    const vendas30 = fluxo30.filter((movimento) => movimento.tipo === 'saida')
-    const faturamentoRegistrado = vendas30.reduce((soma, item) => soma + (item.valor_unitario === null ? 0 : Number(item.valor_unitario) * Number(item.quantidade)), 0)
-    const faturamentoEstimado = vendas30.reduce((soma, item) => soma + (item.valor_unitario === null ? (precoAtualPorProduto.get(item.produto_id) || 0) * Number(item.quantidade) : 0), 0)
-    const saidasSemPreco = vendas30.filter((item) => item.valor_unitario === null).length
-    const totalDespesas = despesas30.reduce((soma, item) => soma + Number(item.valor || 0), 0)
+    const movimentosMes = fluxoMes.filter((movimento) => movimento.data_movimentacao >= obterDataLocal().slice(0, 7) + '-01')
+    const vendasMes = movimentosMes.filter((movimento) => movimento.tipo === 'saida')
+    const entradasMes = movimentosMes.filter((movimento) => movimento.tipo === 'entrada')
+      .reduce((soma, movimento) => soma + Number(movimento.quantidade || 0), 0)
+    const unidadesSaidasMes = vendasMes.reduce((soma, movimento) => soma + Number(movimento.quantidade || 0), 0)
+    const faturamentoRegistrado = vendasMes.reduce((soma, item) => soma + (item.valor_unitario === null ? 0 : Number(item.valor_unitario) * Number(item.quantidade)), 0)
+    const faturamentoEstimado = vendasMes.reduce((soma, item) => soma + (item.valor_unitario === null ? (precoAtualPorProduto.get(item.produto_id) || 0) * Number(item.quantidade) : 0), 0)
+    const ticketMedioMovimentacao = vendasMes.length
+      ? (faturamentoRegistrado + faturamentoEstimado) / vendasMes.length
+      : 0
+    const totalDespesas = despesasMes.reduce((soma, item) => soma + Number(item.valor || 0), 0)
     const saudacao = Number(agora.getHours()) < 12 ? 'Bom dia' : Number(agora.getHours()) < 18 ? 'Boa tarde' : 'Boa noite'
     const primeiroNome = usuarioLogado?.nome?.trim().split(/\s+/)[0] || 'você'
     const statusProduto = (produto) => Number(produto.estoqueAtual || 0) <= 0 ? 'Sem estoque' : Number(produto.estoqueAtual) <= Number(produto.estoqueMinimo || 0) ? 'Estoque baixo' : 'Normal'
@@ -613,7 +604,7 @@ function Dashboard({
             <p className="mt-1 text-sm text-slate-500">Acompanhe o desempenho do estoque e as prioridades de hoje.</p>
           </div>
           <div className="flex gap-2 sm:shrink-0">
-            <span className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 sm:flex-none"><IconeNav nome="calendar" tamanho={17} /> Últimos 30 dias</span>
+            <span className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 sm:flex-none"><IconeNav nome="calendar" tamanho={17} /> Mês atual</span>
             <button type="button" onClick={() => mudarTela('movimentacoes')} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#315cf5] px-4 py-3 text-xs font-bold text-white shadow-md shadow-blue-600/15 hover:bg-blue-700 sm:flex-none"><IconeNav nome="plus" tamanho={17} /> Nova movimentação</button>
           </div>
         </div>
@@ -621,13 +612,13 @@ function Dashboard({
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
           {[
             { nome: 'Produtos ativos', valor: formatarNumero(produtosAtivos.length), detalhe: 'Produtos cadastrados', icone: 'box', bg: 'bg-[#eaf0ff]', cor: 'text-blue-600' },
-            { nome: 'Estoque total', valor: formatarNumero(estoqueTotal), detalhe: 'Unidades disponíveis', icone: 'boxes', bg: 'bg-violet-100', cor: 'text-violet-600' },
+            { nome: 'Entradas no mês', valor: carregandoIndicadores ? '…' : formatarNumero(entradasMes), detalhe: 'Unidades recebidas no mês atual', icone: 'boxes', bg: 'bg-violet-100', cor: 'text-violet-600' },
             { nome: 'Saídas hoje', valor: carregandoResumoDashboard ? '…' : formatarNumero(resumoDashboard.saidasHoje), detalhe: 'Unidades no dia', icone: 'trend', bg: 'bg-emerald-100', cor: 'text-emerald-600' },
             { nome: 'Estoque crítico', valor: formatarNumero(estoqueCritico.length), detalhe: 'Requer sua atenção', icone: 'alert', bg: 'bg-amber-100', cor: 'text-amber-600' },
           ].map((card) => <div key={card.nome} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
             <div className={`ef-dashboard-kpi-icon mb-3 grid h-11 w-11 place-items-center rounded-xl ${card.bg} ${card.cor}`}><IconeNav nome={card.icone} tamanho={22} /></div>
             <p className="text-xs font-semibold text-slate-500">{card.nome}</p>
-            <p className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-[27px]">{carregandoProdutos && (card.nome === 'Produtos ativos' || card.nome === 'Estoque total') ? '…' : card.valor}</p>
+            <p className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-[27px]">{carregandoProdutos && (card.nome === 'Produtos ativos') ? '…' : card.valor}</p>
             <p className="mt-1.5 text-[11px] text-slate-400">{card.detalhe}</p>
           </div>)}
         </div>
@@ -636,14 +627,13 @@ function Dashboard({
           <div className="grid grid-cols-2 gap-x-4 gap-y-5 md:grid-cols-[1.3fr_repeat(4,1fr)] md:items-center md:gap-0">
             <div className="col-span-2 border-b border-slate-100 pb-4 md:col-span-1 md:border-b-0 md:pb-0 md:pr-4">
               <div className="flex items-center gap-2 text-slate-800"><IconeNav nome="money" tamanho={20} /><h2 className="text-sm font-extrabold">Resumo financeiro</h2></div>
-              <p className="mt-1 text-[11px] text-slate-400">Referência: últimos 30 dias</p>
+              <p className="mt-1 text-[11px] text-slate-400">Referência: mês atual</p>
             </div>
-            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Faturamento bruto*</p><strong className="mt-1 block break-words text-base text-slate-900 sm:text-lg">{carregandoIndicadores ? '…' : formatarMoeda(faturamentoRegistrado + faturamentoEstimado)}</strong><p className="mt-1 text-[10px] text-slate-400">Histórico + estimativas</p></div>
-            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Custos estimados</p><strong className="mt-1 block text-lg text-slate-400">—</strong><p className="mt-1 text-[10px] text-slate-400">Aguardando custos de produção</p></div>
-            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Despesas</p><strong className="mt-1 block break-words text-base text-slate-900 sm:text-lg">{carregandoIndicadores ? '…' : formatarMoeda(totalDespesas)}</strong><p className="mt-1 text-[10px] text-slate-400">{despesas30.length} lançamentos</p></div>
-            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Resultado estimado</p><strong className="mt-1 block text-lg text-slate-400">—</strong><p className="mt-1 text-[10px] text-slate-400">Aguardando custos</p></div>
+            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Valor bruto das saídas</p><strong className="mt-1 block break-words text-base text-slate-900 sm:text-lg">{carregandoIndicadores ? '…' : formatarMoeda(faturamentoRegistrado + faturamentoEstimado)}</strong><p className="mt-1 text-[10px] text-slate-400">Inclui preços atuais estimados</p></div>
+            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Saídas no mês</p><strong className="mt-1 block break-words text-base text-slate-900 sm:text-lg">{carregandoIndicadores ? '…' : formatarNumero(unidadesSaidasMes)}</strong><p className="mt-1 text-[10px] text-slate-400">Unidades vendidas</p></div>
+            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Despesas</p><strong className="mt-1 block break-words text-base text-slate-900 sm:text-lg">{carregandoIndicadores ? '…' : formatarMoeda(totalDespesas)}</strong><p className="mt-1 text-[10px] text-slate-400">{despesasMes.length} lançamentos</p></div>
+            <div className="min-w-0 md:border-l md:border-slate-200 md:px-4"><p className="text-[11px] text-slate-400">Valor médio por saída</p><strong className="mt-1 block break-words text-base text-slate-900 sm:text-lg">{carregandoIndicadores ? '…' : formatarMoeda(ticketMedioMovimentacao)}</strong><p className="mt-1 text-[10px] text-slate-400">Por movimentação, com estimativas</p></div>
           </div>
-          <p className="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-400">* {saidasSemPreco} saída(s) sem preço histórico foram estimadas pelo preço atual cadastrado. Valores não representam faturamento confirmado.</p>
         </div>}
 
         {erroIndicadores && <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{erroIndicadores}</p>}
@@ -723,7 +713,6 @@ function Dashboard({
         .ef-dark .text-amber-700, .ef-dark .text-amber-800 { color: #ffc46b !important; }
         .ef-dark .text-red-600, .ef-dark .text-red-700 { color: #ff8d9b !important; }
         .ef-dark .text-blue-800 { color: #b2cbff !important; }
-        .ef-dark .bg-\[\#eaf0ff\] { background-color: #243b64 !important; }
         /* Tokens específicos da Visão Geral: não alteram os indicadores no modo claro. */
         .ef-dark .ef-dashboard-kpi-icon {
           background-color: #263957 !important;

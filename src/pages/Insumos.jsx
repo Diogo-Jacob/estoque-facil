@@ -57,7 +57,7 @@ export default function Insumos({ empresaAtiva }) {
   const [itens, setItens] = useState([])
   const [aba, setAba] = useState('Matéria-prima')
   const [busca, setBusca] = useState('')
-  const [carregando, setCarregando] = useState(false)
+  const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
   const [aviso, setAviso] = useState('')
@@ -79,7 +79,34 @@ export default function Insumos({ empresaAtiva }) {
     setCarregando(false)
   }, [acessoSD])
 
-  useEffect(() => { carregar() }, [carregar])
+  // A consulta inicial ocorre no efeito; o recarregamento após salvar continua em carregar().
+  // O retorno assíncrono e a limpeza evitam atualizações de consultas anteriores.
+  useEffect(() => {
+    if (!acessoSD) return undefined
+
+    let ativo = true
+    void Promise.resolve(
+      supabase
+        .from('insumos')
+        .select('id,empresa_id,nome,codigo,categoria,unidade,custo_unitario,estoque_minimo,observacao,ativo,criada_em,atualizada_em')
+        .eq('empresa_id', SD_ID)
+        .order('nome', { ascending: true })
+    ).then(({ data, error }) => {
+      if (!ativo) return
+      if (error) setErro(`Não foi possível carregar os insumos: ${error.message}`)
+      else {
+        setItens(data || [])
+        setErro('')
+      }
+      setCarregando(false)
+    }).catch((error) => {
+      if (!ativo) return
+      setErro(`Não foi possível carregar os insumos: ${error.message}`)
+      setCarregando(false)
+    })
+
+    return () => { ativo = false }
+  }, [acessoSD])
 
   const categoriasExistentes = useMemo(() => {
     const categoriasPadrao = ABAS.map(item => item.categoria)

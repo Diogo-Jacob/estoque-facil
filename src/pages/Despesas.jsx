@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -85,10 +85,18 @@ export default function Despesas({ empresaAtiva }) {
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
   const [statusFiltro, setStatusFiltro] = useState('')
   const [pagina, setPagina] = useState(1)
+  const requisicaoAtual = useRef(0)
 
-  // Carregamento paginado: o Supabase pode limitar consultas a 1.000 linhas.
+  // Cada consulta recebe um identificador, para ignorar respostas antigas
+  // se a empresa mudar ou o componente for desmontado.
   const carregar = useCallback(async () => {
-    if (!sd || !empresaId) { setRegistros([]); return }
+    const requisicao = ++requisicaoAtual.current
+    if (!sd || !empresaId) {
+      setRegistros([])
+      setCarregando(false)
+      return
+    }
+
     setCarregando(true)
     setErro('')
     try {
@@ -101,19 +109,42 @@ export default function Despesas({ empresaAtiva }) {
           .order('data_despesa', { ascending: false })
           .order('criada_em', { ascending: false })
           .range(pos, pos + tamanho - 1)
+        if (requisicao !== requisicaoAtual.current) return
         if (error) throw error
         acumulado.push(...(data || []))
         if (!data || data.length < tamanho) break
       }
-      setRegistros(acumulado)
+      if (requisicao === requisicaoAtual.current) setRegistros(acumulado)
     } catch (e) {
-      setErro(`Não foi possível carregar as despesas: ${e.message || 'erro inesperado'}`)
-    } finally { setCarregando(false) }
+      if (requisicao === requisicaoAtual.current) {
+        setErro(`Não foi possível carregar as despesas: ${e.message || 'erro inesperado'}`)
+      }
+    } finally {
+      if (requisicao === requisicaoAtual.current) setCarregando(false)
+    }
   }, [empresaId, sd])
 
-  useEffect(() => { carregar() }, [carregar])
-  useEffect(() => { setPagina(1) }, [inicio, fim, busca, categoriaFiltro, statusFiltro])
-  useEffect(() => { setAviso(''); setErro('') }, [empresaId])
+  useEffect(() => {
+    let ativo = true
+    // Agenda o carregamento fora da execução síncrona do efeito.
+    void Promise.resolve().then(() => {
+      if (!ativo) return
+      setAviso('')
+      setErro('')
+      setRegistros([])
+      void carregar()
+    })
+    return () => {
+      ativo = false
+      requisicaoAtual.current += 1
+    }
+  }, [carregar])
+
+  // A paginação volta à primeira página diretamente quando o filtro muda.
+  function mudarFiltro(alterar, valor) {
+    alterar(valor)
+    setPagina(1)
+  }
 
   const filtrados = useMemo(() => registros.filter(r => {
     const texto = busca.toLocaleLowerCase('pt-BR').trim()
@@ -283,12 +314,12 @@ export default function Despesas({ empresaAtiva }) {
           <button type="button" onClick={() => setFiltrar(v => !v)} aria-expanded={filtrar} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold hover:bg-slate-50"><Icone nome="filtro" tamanho={17}/> Filtrar</button>
         </div>
         {filtrar && <div className="grid grid-cols-1 gap-3 border-b border-slate-100 bg-slate-50/50 p-4 sm:grid-cols-2 lg:grid-cols-5">
-          <label className="text-xs font-semibold">De<input className={`${campo} mt-1`} type="date" value={inicio} onChange={e => setInicio(e.target.value)}/></label>
-          <label className="text-xs font-semibold">Até<input className={`${campo} mt-1`} type="date" value={fim} onChange={e => setFim(e.target.value)}/></label>
-          <label className="text-xs font-semibold">Categoria<select className={`${campo} mt-1`} value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)}><option value="">Todas</option>{[...new Set([...CATEGORIAS, ...registros.map(r => r.categoria)])].map(c => <option key={c}>{c}</option>)}</select></label>
-          <label className="text-xs font-semibold">Status<select className={`${campo} mt-1`} value={statusFiltro} onChange={e => setStatusFiltro(e.target.value)}><option value="">Todos</option><option value="paga">Paga</option><option value="pendente">Pendente</option></select></label>
-          <label className="text-xs font-semibold">Buscar<div className="relative mt-1"><Icone nome="buscar" tamanho={16} className="absolute left-3 top-3 text-slate-400"/><input className={`${campo} pl-9`} placeholder="Descrição..." value={busca} onChange={e => setBusca(e.target.value)}/></div></label>
-          <div className="lg:col-span-5"><button className="text-xs font-semibold text-blue-600 hover:underline" type="button" onClick={() => { setInicio(inicioMes()); setFim(hojeLocal()); setBusca(''); setCategoriaFiltro(''); setStatusFiltro('') }}>Limpar filtros</button></div>
+          <label className="text-xs font-semibold">De<input className={`${campo} mt-1`} type="date" value={inicio} onChange={e => mudarFiltro(setInicio, e.target.value)}/></label>
+          <label className="text-xs font-semibold">Até<input className={`${campo} mt-1`} type="date" value={fim} onChange={e => mudarFiltro(setFim, e.target.value)}/></label>
+          <label className="text-xs font-semibold">Categoria<select className={`${campo} mt-1`} value={categoriaFiltro} onChange={e => mudarFiltro(setCategoriaFiltro, e.target.value)}><option value="">Todas</option>{[...new Set([...CATEGORIAS, ...registros.map(r => r.categoria)])].map(c => <option key={c}>{c}</option>)}</select></label>
+          <label className="text-xs font-semibold">Status<select className={`${campo} mt-1`} value={statusFiltro} onChange={e => mudarFiltro(setStatusFiltro, e.target.value)}><option value="">Todos</option><option value="paga">Paga</option><option value="pendente">Pendente</option></select></label>
+          <label className="text-xs font-semibold">Buscar<div className="relative mt-1"><Icone nome="buscar" tamanho={16} className="absolute left-3 top-3 text-slate-400"/><input className={`${campo} pl-9`} placeholder="Descrição..." value={busca} onChange={e => mudarFiltro(setBusca, e.target.value)}/></div></label>
+          <div className="lg:col-span-5"><button className="text-xs font-semibold text-blue-600 hover:underline" type="button" onClick={() => { setInicio(inicioMes()); setFim(hojeLocal()); setBusca(''); setCategoriaFiltro(''); setStatusFiltro(''); setPagina(1) }}>Limpar filtros</button></div>
         </div>}
         <div className="w-full overflow-x-auto">
           <table className="w-full min-w-[690px] text-left text-sm">

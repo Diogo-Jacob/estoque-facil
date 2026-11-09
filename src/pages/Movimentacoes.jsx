@@ -1,6 +1,97 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
 
+  function Icone({ nome, size = 18, className = '' }) {
+    const desenhos = {
+      entrada: <><path d="m15 3-9 9"/><path d="M6 4v8h8"/></>,
+      saida: <><path d="m9 15 9-9"/><path d="M10 6h8v8"/></>,
+      caixa: <><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="M3 7v10l9 5 9-5V7M12 12v10"/></>,
+      calendario: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></>,
+      carrinho: <><circle cx="9" cy="20" r="1"/><circle cx="19" cy="20" r="1"/><path d="M2 3h2l3 13h13l2-9H5"/></>,
+      seta: <><path d="M4 12h16m-6-6 6 6-6 6"/></>,
+      chevron: <><path d="m6 9 6 6 6-6"/></>,
+      filtro: <><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/></>,
+      busca: <><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></>,
+      check: <><path d="m4 12 5 5L20 6"/></>,
+      escudo: <><path d="M12 22c6-3 8-7 8-12V5l-8-3-8 3v5c0 5 2 9 8 12Z"/><path d="m9 12 2 2 4-4"/></>,
+      esquerda: <><path d="m15 18-6-6 6-6"/></>,
+      direita: <><path d="m9 18 6-6-6-6"/></>,
+    }
+    return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>{desenhos[nome] || desenhos.caixa}</svg>
+  }
+
+
+  function BadgeTipo({ tipo }) {
+    const entrada = tipo === 'entrada'
+    return <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${entrada ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'}`}><Icone nome={tipo} size={13}/>{entrada ? 'Entrada' : 'Saída'}</span>
+  }
+
+
+  function BotaoEstorno({ movimentacao, estornandoId, onEstornar }) {
+    if (!(!movimentacao.estornada && !movimentacao.movimentacaoOriginalId)) return <span className="text-xs text-slate-400">Estornada / estorno</span>
+    return <button type="button" disabled={estornandoId === movimentacao.id} onClick={() => onEstornar(movimentacao)} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-50">{estornandoId === movimentacao.id ? 'Estornando…' : 'Estornar'}</button>
+  }
+
+
+  function HistoricoTabela({
+    empresaEhSdPlasticos,
+    empresaUsaCanalVenda,
+    listaPagina,
+    precosHistoricoRecente,
+    dataLegivel,
+    formatarNumero,
+    formatarCanalVenda,
+    formatarPrecoUnitario,
+    estornandoId,
+    onEstornar,
+  }) {
+    return (
+      <div className="overflow-x-auto">
+        <table className={`w-full ${empresaEhSdPlasticos ? 'min-w-[900px]' : 'min-w-[720px]'} border-collapse text-left text-sm`}>
+          <thead className="border-y border-slate-100 bg-slate-50/80">
+            <tr className="text-[10px] uppercase tracking-wider text-slate-400">
+              <th className="px-5 py-3">Data</th>
+              <th className="px-5 py-3">Produto</th>
+              <th className="px-5 py-3">Tipo</th>
+              <th className="px-5 py-3">Quantidade</th>
+              {empresaUsaCanalVenda && <th className="px-5 py-3">Canal</th>}
+              {empresaEhSdPlasticos && <th className="px-5 py-3">Valor unitário</th>}
+              <th className="px-5 py-3">Observação</th>
+              <th className="px-5 py-3">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {listaPagina.map((movimentacao) => {
+              // Algumas linhas recentes vêm das props da página; as da busca vêm do Supabase.
+              const valorRegistrado = movimentacao.valorUnitario ?? movimentacao.valor_unitario ?? precosHistoricoRecente[movimentacao.id]
+              const temValor = movimentacao.tipo === 'saida' && valorRegistrado !== null && valorRegistrado !== undefined && valorRegistrado !== '' && Number.isFinite(Number(valorRegistrado))
+              return (
+                <tr key={movimentacao.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
+                  <td className="whitespace-nowrap px-5 py-3 text-slate-600">{dataLegivel(movimentacao.data ?? movimentacao.data_movimentacao)}</td>
+                  <td className="px-5 py-3 font-medium text-slate-700">{movimentacao.produtoNome}</td>
+                  <td className="px-5 py-3"><BadgeTipo tipo={movimentacao.tipo}/></td>
+                  <td className="whitespace-nowrap px-5 py-3 font-medium text-slate-700">{formatarNumero(movimentacao.quantidade)} un.</td>
+                  {empresaUsaCanalVenda && (
+                    <td className="px-5 py-3 text-slate-600">{movimentacao.tipo === 'saida' ? formatarCanalVenda(movimentacao.canalVenda) : '—'}</td>
+                  )}
+                  {empresaEhSdPlasticos && (
+                    <td className="whitespace-nowrap px-5 py-3 font-semibold text-slate-700" title={!temValor && movimentacao.tipo === 'saida' ? 'Preço histórico não registrado' : undefined}>
+                      {temValor ? formatarPrecoUnitario(valorRegistrado) : '—'}
+                    </td>
+                  )}
+                  <td className="max-w-[220px] truncate px-5 py-3 text-slate-500" title={movimentacao.observacao || ''}>{movimentacao.observacao || '—'}</td>
+                  <td className="px-5 py-3"><BotaoEstorno movimentacao={movimentacao} estornandoId={estornandoId} onEstornar={onEstornar}/></td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        {listaPagina.length === 0 && <p className="p-8 text-center text-sm text-slate-500">Nenhuma movimentação encontrada.</p>}
+      </div>
+    )
+  }
+
+
 function Movimentacoes({
   produtos,
   movimentacoes,
@@ -12,8 +103,6 @@ function Movimentacoes({
 }) {
   const [salvando, setSalvando] = useState(false)
   const [estornandoId, setEstornandoId] = useState(null)
-  const [mostrarHistoricoCompleto, setMostrarHistoricoCompleto] =
-    useState(false)
 
   const [filtroProduto, setFiltroProduto] = useState('')
   const [buscaHistorico, setBuscaHistorico] = useState('')
@@ -25,7 +114,7 @@ function Movimentacoes({
   const [dataFinal, setDataFinal] = useState('')
 
   const [historicoCompleto, setHistoricoCompleto] = useState([])
-  const [precosHistoricoRecente, setPrecosHistoricoRecente] = useState({})
+  const [consultaPrecosRecentes, setConsultaPrecosRecentes] = useState({ chave: null, dados: {} })
   const [carregandoHistoricoCompleto, setCarregandoHistoricoCompleto] =
     useState(false)
   const [historicoBuscado, setHistoricoBuscado] = useState(false)
@@ -102,12 +191,13 @@ function Movimentacoes({
 
   const movimentacoesRecentes = movimentacoes.slice(0, 10)
   const idsRecentes = movimentacoesRecentes.map((item) => item.id).filter(Boolean).join(',')
+  const chavePrecosRecentes = `${empresaAtiva?.id || ''}:${idsRecentes}`
+  const precosHistoricoRecente = consultaPrecosRecentes.chave === chavePrecosRecentes ? consultaPrecosRecentes.dados : {}
 
   // As movimentações recentes são recebidas do componente pai, que pode não
   // incluir valor_unitario. Consultamos apenas o preço das linhas visíveis.
   useEffect(() => {
     let ativo = true
-    setPrecosHistoricoRecente({})
 
     if (!empresaEhSdPlasticos || !empresaAtiva?.id || !idsRecentes) {
       return () => { ativo = false }
@@ -126,14 +216,15 @@ function Movimentacoes({
         return
       }
 
-      setPrecosHistoricoRecente(
-        Object.fromEntries((data || []).map((item) => [item.id, item.valor_unitario]))
-      )
+      setConsultaPrecosRecentes({
+        chave: chavePrecosRecentes,
+        dados: Object.fromEntries((data || []).map((item) => [item.id, item.valor_unitario])),
+      })
     }
 
     carregarPrecosRecentes()
     return () => { ativo = false }
-  }, [empresaAtiva?.id, empresaEhSdPlasticos, idsRecentes])
+  }, [empresaAtiva?.id, empresaEhSdPlasticos, idsRecentes, chavePrecosRecentes])
 
   const produtoSelecionado = produtos.find(
     (produto) => produto.id === novaMovimentacao.produtoId
@@ -443,88 +534,8 @@ function Movimentacoes({
     setEstornandoId(null)
   }
 
-  function podeEstornar(movimentacao) {
-    return !movimentacao.estornada && !movimentacao.movimentacaoOriginalId
-  }
-
-  function Icone({ nome, size = 18, className = '' }) {
-    const desenhos = {
-      entrada: <><path d="m15 3-9 9"/><path d="M6 4v8h8"/></>,
-      saida: <><path d="m9 15 9-9"/><path d="M10 6h8v8"/></>,
-      caixa: <><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="M3 7v10l9 5 9-5V7M12 12v10"/></>,
-      calendario: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></>,
-      carrinho: <><circle cx="9" cy="20" r="1"/><circle cx="19" cy="20" r="1"/><path d="M2 3h2l3 13h13l2-9H5"/></>,
-      seta: <><path d="M4 12h16m-6-6 6 6-6 6"/></>,
-      chevron: <><path d="m6 9 6 6 6-6"/></>,
-      filtro: <><path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z"/></>,
-      busca: <><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></>,
-      check: <><path d="m4 12 5 5L20 6"/></>,
-      escudo: <><path d="M12 22c6-3 8-7 8-12V5l-8-3-8 3v5c0 5 2 9 8 12Z"/><path d="m9 12 2 2 4-4"/></>,
-      esquerda: <><path d="m15 18-6-6 6-6"/></>,
-      direita: <><path d="m9 18 6-6-6-6"/></>,
-    }
-    return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>{desenhos[nome] || desenhos.caixa}</svg>
-  }
-
   const campo = 'mt-2 min-h-[44px] w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
   const rotulo = 'block text-xs font-semibold text-slate-700'
-
-  function BadgeTipo({ tipo }) {
-    const entrada = tipo === 'entrada'
-    return <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${entrada ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'}`}><Icone nome={tipo} size={13}/>{entrada ? 'Entrada' : 'Saída'}</span>
-  }
-
-  function BotaoEstorno({ movimentacao }) {
-    if (!podeEstornar(movimentacao)) return <span className="text-xs text-slate-400">Estornada / estorno</span>
-    return <button type="button" disabled={estornandoId === movimentacao.id} onClick={() => estornarMovimentacao(movimentacao)} className="rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-50">{estornandoId === movimentacao.id ? 'Estornando…' : 'Estornar'}</button>
-  }
-
-  function HistoricoTabela() {
-    return (
-      <div className="overflow-x-auto">
-        <table className={`w-full ${empresaEhSdPlasticos ? 'min-w-[900px]' : 'min-w-[720px]'} border-collapse text-left text-sm`}>
-          <thead className="border-y border-slate-100 bg-slate-50/80">
-            <tr className="text-[10px] uppercase tracking-wider text-slate-400">
-              <th className="px-5 py-3">Data</th>
-              <th className="px-5 py-3">Produto</th>
-              <th className="px-5 py-3">Tipo</th>
-              <th className="px-5 py-3">Quantidade</th>
-              {empresaUsaCanalVenda && <th className="px-5 py-3">Canal</th>}
-              {empresaEhSdPlasticos && <th className="px-5 py-3">Valor unitário</th>}
-              <th className="px-5 py-3">Observação</th>
-              <th className="px-5 py-3">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {listaPagina.map((movimentacao) => {
-              // Algumas linhas recentes vêm das props da página; as da busca vêm do Supabase.
-              const valorRegistrado = movimentacao.valorUnitario ?? movimentacao.valor_unitario ?? precosHistoricoRecente[movimentacao.id]
-              const temValor = movimentacao.tipo === 'saida' && valorRegistrado !== null && valorRegistrado !== undefined && valorRegistrado !== '' && Number.isFinite(Number(valorRegistrado))
-              return (
-                <tr key={movimentacao.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
-                  <td className="whitespace-nowrap px-5 py-3 text-slate-600">{dataLegivel(movimentacao.data ?? movimentacao.data_movimentacao)}</td>
-                  <td className="px-5 py-3 font-medium text-slate-700">{movimentacao.produtoNome}</td>
-                  <td className="px-5 py-3"><BadgeTipo tipo={movimentacao.tipo}/></td>
-                  <td className="whitespace-nowrap px-5 py-3 font-medium text-slate-700">{formatarNumero(movimentacao.quantidade)} un.</td>
-                  {empresaUsaCanalVenda && (
-                    <td className="px-5 py-3 text-slate-600">{movimentacao.tipo === 'saida' ? formatarCanalVenda(movimentacao.canalVenda) : '—'}</td>
-                  )}
-                  {empresaEhSdPlasticos && (
-                    <td className="whitespace-nowrap px-5 py-3 font-semibold text-slate-700" title={!temValor && movimentacao.tipo === 'saida' ? 'Preço histórico não registrado' : undefined}>
-                      {temValor ? formatarPrecoUnitario(valorRegistrado) : '—'}
-                    </td>
-                  )}
-                  <td className="max-w-[220px] truncate px-5 py-3 text-slate-500" title={movimentacao.observacao || ''}>{movimentacao.observacao || '—'}</td>
-                  <td className="px-5 py-3"><BotaoEstorno movimentacao={movimentacao}/></td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-        {listaPagina.length === 0 && <p className="p-8 text-center text-sm text-slate-500">Nenhuma movimentação encontrada.</p>}
-      </div>
-    )
-  }
 
   return <section className="w-full min-w-0 space-y-5 pb-8">
     <header className="min-w-0 pb-1">
@@ -562,9 +573,9 @@ function Movimentacoes({
     </div>
 
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 lg:px-6"><div><h3 className="text-base font-bold text-slate-900">Histórico de movimentações</h3><p className="mt-1 text-xs text-slate-400">Acompanhe e filtre todas as operações</p></div><button type="button" onClick={()=>setFiltrosAvancados(!filtrosAvancados)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Icone nome="filtro" size={15}/>Filtros avançados</button></div>
-      <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row lg:px-6"><div className="relative min-w-0 flex-1"><span className="pointer-events-none absolute left-3 top-3 text-slate-400"><Icone nome="busca" size={17}/></span><input value={buscaHistorico} onChange={event=>{setBuscaHistorico(event.target.value);setPaginaHistorico(1)}} placeholder="Buscar produto..." className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500"/></div><select value={filtroTipo} onChange={event=>{setFiltroTipo(event.target.value);setMostrarHistoricoCompleto(true)}} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700"><option value="">Todos os tipos</option><option value="entrada">Entradas</option><option value="saida">Saídas</option></select><button type="button" onClick={()=>{setMostrarHistoricoCompleto(true);buscarHistoricoCompleto()}} disabled={carregandoHistoricoCompleto} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{carregandoHistoricoCompleto ? 'Buscando…' : 'Buscar histórico'}</button></div>
+      <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row lg:px-6"><div className="relative min-w-0 flex-1"><span className="pointer-events-none absolute left-3 top-3 text-slate-400"><Icone nome="busca" size={17}/></span><input value={buscaHistorico} onChange={event=>{setBuscaHistorico(event.target.value);setPaginaHistorico(1)}} placeholder="Buscar produto..." className="w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-blue-500"/></div><select value={filtroTipo} onChange={event=>{setFiltroTipo(event.target.value);}} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700"><option value="">Todos os tipos</option><option value="entrada">Entradas</option><option value="saida">Saídas</option></select><button type="button" onClick={()=>{buscarHistoricoCompleto()}} disabled={carregandoHistoricoCompleto} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{carregandoHistoricoCompleto ? 'Buscando…' : 'Buscar histórico'}</button></div>
       {filtrosAvancados && <div className="grid grid-cols-1 gap-3 border-t border-slate-100 bg-slate-50/50 px-5 py-4 sm:grid-cols-2 lg:grid-cols-5 lg:px-6"><select value={filtroProduto} onChange={event=>setFiltroProduto(event.target.value)} className={campo}><option value="">Todos os produtos</option>{produtos.map(produto=><option key={produto.id} value={produto.id}>{produto.nome}</option>)}</select>{empresaUsaCanalVenda && <select value={filtroCanalVenda} onChange={event=>setFiltroCanalVenda(event.target.value)} className={campo}><option value="">Todos os canais</option>{canaisVenda.map(canal=><option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}<option value="__sem_canal__">Não informado</option></select>}<input type="date" aria-label="Data inicial" value={dataInicial} onChange={event=>setDataInicial(event.target.value)} className={campo}/><input type="date" aria-label="Data final" value={dataFinal} onChange={event=>setDataFinal(event.target.value)} className={campo}/><button type="button" onClick={limparFiltrosHistorico} className="mt-2 rounded-xl bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700">Limpar filtros</button>{filtroCanalVenda && filtroTipo === 'entrada' && <p className="col-span-full text-xs text-amber-700">Canais de venda se aplicam somente às saídas.</p>}</div>}
-      {(carregandoMovimentacoes || carregandoHistoricoCompleto) ? <p className="p-8 text-center text-sm text-slate-500">Carregando movimentações…</p> : <HistoricoTabela/>}
+      {(carregandoMovimentacoes || carregandoHistoricoCompleto) ? <p className="p-8 text-center text-sm text-slate-500">Carregando movimentações…</p> : <HistoricoTabela empresaEhSdPlasticos={empresaEhSdPlasticos} empresaUsaCanalVenda={empresaUsaCanalVenda} listaPagina={listaPagina} precosHistoricoRecente={precosHistoricoRecente} dataLegivel={dataLegivel} formatarNumero={formatarNumero} formatarCanalVenda={formatarCanalVenda} formatarPrecoUnitario={formatarPrecoUnitario} estornandoId={estornandoId} onEstornar={estornarMovimentacao}/>}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 lg:px-6"><p className="text-xs text-slate-400">{historicoBuscado ? `Exibindo até 100 registros da busca · ${historicoFiltrado.length} carregados` : `Últimas ${historicoFiltrado.length} movimentações · use Buscar histórico para mais registros`}</p><div className="flex items-center gap-1"><button type="button" disabled={paginaAtual <= 1} onClick={()=>setPaginaHistorico(paginaAtual-1)} className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"><Icone nome="esquerda" size={16}/></button>{Array.from({length: Math.min(paginas,5)},(_,i)=>i+1).map(pagina=><button key={pagina} type="button" onClick={()=>setPaginaHistorico(pagina)} className={`h-8 w-8 rounded-lg text-xs font-semibold ${pagina === paginaAtual ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>{pagina}</button>)}<button type="button" disabled={paginaAtual >= paginas} onClick={()=>setPaginaHistorico(paginaAtual+1)} className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"><Icone nome="direita" size={16}/></button></div></div>
     </div>
   </section>

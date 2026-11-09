@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import jsPDF from 'jspdf'
 import {
   BarChart,
@@ -34,7 +34,97 @@ function Icone({ nome, tamanho = 19, className = '' }) {
   )
 }
 
-function Relatorios({ empresaAtiva }) {
+
+const ESTILOS_GRAFICOS = `
+  .efr-report {
+    --efr-axis: #334155;
+    --efr-axis-muted: #475569;
+    --efr-grid: #dbe4f0;
+    --efr-track: #eff3f9;
+    --efr-hover: #edf4ff;
+    --efr-tooltip-bg: #ffffff;
+    --efr-tooltip-text: #172744;
+    --efr-tooltip-border: #dce4f0;
+    --efr-tooltip-shadow: 0 8px 24px rgba(15,23,42,.12);
+    --efr-ring-bg: #e2e8f0;
+  }
+  .ef-dark .efr-report {
+    --efr-axis: #dce7fa;
+    --efr-axis-muted: #bdcde6;
+    --efr-grid: #344761;
+    --efr-track: #293b55;
+    --efr-hover: #263b59;
+    --efr-tooltip-bg: #233650;
+    --efr-tooltip-text: #f5f8ff;
+    --efr-tooltip-border: #415675;
+    --efr-tooltip-shadow: 0 10px 26px rgba(0,0,0,.3);
+    --efr-ring-bg: #354761;
+  }
+  .ef-dark .efr-report .efr-chart-frame { background: transparent !important; }
+  .ef-dark .efr-report .efr-chart-label { color: var(--efr-axis) !important; }
+  .ef-dark .efr-report .efr-chart-muted { color: var(--efr-axis-muted) !important; }
+  .ef-dark .efr-report .efr-mobile-track { background: var(--efr-track) !important; }
+  .ef-dark .efr-report .recharts-cartesian-axis-tick-value { fill: var(--efr-axis) !important; }
+  .ef-dark .efr-report .recharts-cartesian-grid line { stroke: var(--efr-grid) !important; }
+  .ef-dark .efr-report .recharts-label-list text { fill: var(--efr-axis) !important; }
+  .ef-dark .efr-report .recharts-bar-background-rectangle { fill: var(--efr-track) !important; }
+`
+
+function GraficoRoscaCanais({ distribuicaoCanais, totalUnidadesCanais }) {
+    const formatarQuantidade = (valor) => Number(valor || 0).toLocaleString('pt-BR')
+    // O gráfico usa unidades movimentadas, não faturamento nem número de lançamentos.
+    const raio = 76
+    const circunferencia = 2 * Math.PI * raio
+
+    return (
+      <div className="flex flex-col items-center justify-center gap-5 sm:flex-row lg:flex-col xl:flex-row">
+        <div className="relative h-36 w-36 shrink-0 sm:h-40 sm:w-40" role="img" aria-label={`Distribuição de ${formatarQuantidade(totalUnidadesCanais)} unidades por canal de venda`}>
+          <svg viewBox="0 0 200 200" className="h-full w-full" aria-hidden="true">
+            <circle cx="100" cy="100" r={raio} fill="none" stroke="var(--efr-ring-bg)" strokeWidth="22" />
+            {distribuicaoCanais.map((canal, indice) => {
+              const comprimento = (canal.percentual / 100) * circunferencia
+              const deslocamento = distribuicaoCanais.slice(0, indice).reduce(
+                (total, anterior) => total + (anterior.percentual / 100) * circunferencia,
+                0
+              )
+              return (
+                <circle
+                  key={canal.canal}
+                  cx="100"
+                  cy="100"
+                  r={raio}
+                  fill="none"
+                  stroke={canal.cor}
+                  strokeWidth="22"
+                  strokeDasharray={`${comprimento} ${circunferencia - comprimento}`}
+                  strokeDashoffset={-deslocamento}
+                  transform="rotate(-90 100 100)"
+                >
+                  <title>{`${canal.canal}: ${formatarQuantidade(canal.total)} unidades (${canal.percentual.toFixed(1)}%)`}</title>
+                </circle>
+              )
+            })}
+          </svg>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            <strong className="efr-chart-label text-2xl font-extrabold tracking-tight text-slate-900">{formatarQuantidade(totalUnidadesCanais)}</strong>
+            <span className="efr-chart-muted mt-1 text-xs font-medium text-slate-500">unidades</span>
+          </div>
+        </div>
+        <div className="w-full min-w-0 max-w-xs space-y-3 px-2 sm:w-auto sm:flex-1 sm:px-0">
+          {distribuicaoCanais.map((canal) => (
+            <div key={canal.canal} className="flex items-center gap-3 text-sm">
+              <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: canal.cor }} />
+              <span className="efr-chart-label min-w-0 flex-1 truncate font-medium text-slate-700" title={canal.canal}>{canal.canal}</span>
+              <strong className="efr-chart-label shrink-0 tabular-nums text-slate-900">{canal.percentual.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+
+function RelatoriosConteudo({ empresaAtiva }) {
   function obterDataLocal(data = new Date()) {
     const ano = data.getFullYear()
     const mes = String(data.getMonth() + 1).padStart(2, '0')
@@ -60,6 +150,8 @@ function Relatorios({ empresaAtiva }) {
   const [vendasDados, setVendasDetalhadas] = useState([])
   const [carregandoRelatorio, setCarregandoRelatorio] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
+  const consultaAtual = useRef(0)
+  const empresaId = empresaAtiva?.id
   const empresaEhDega = empresaAtiva?.nome?.trim().toLowerCase() === 'dega'
   const canaisVenda = empresaEhDega
     ? [
@@ -77,18 +169,10 @@ function Relatorios({ empresaAtiva }) {
     ? 'Não informado'
     : canaisVenda.find((canal) => canal.valor === canalSelecionado)?.nome || 'Todos os canais'
 
-  // Evita carregar o canal de uma empresa ao mudar para outra.
-  useEffect(() => {
-    setCanalSelecionado('')
-  }, [empresaAtiva?.id])
-
-  useEffect(() => {
-    if (empresaAtiva?.id && dataInicial && dataFinal) {
-      carregarRelatorio()
-    }
-  }, [empresaAtiva?.id, dataInicial, dataFinal, buscaProduto, canalSelecionado])
-
-  async function carregarRelatorio() {
+  // As consultas antigas são invalidadas caso o usuário altere os filtros.
+  const carregarRelatorio = useCallback(async () => {
+    if (!empresaId) return
+    const requisicao = ++consultaAtual.current
     if (!dataInicial || !dataFinal) return
 
     if (dataInicial > dataFinal) {
@@ -101,13 +185,14 @@ function Relatorios({ empresaAtiva }) {
     setCarregandoRelatorio(true)
 
     const { data, error } = await supabase.rpc('relatorio_produtos_por_canal', {
-      p_empresa_id: empresaAtiva.id,
+      p_empresa_id: empresaId,
       p_data_inicial: dataInicial,
       p_data_final: dataFinal,
       p_busca: buscaProduto.trim(),
       p_canal_venda: canalSelecionado || null,
     })
 
+    if (requisicao !== consultaAtual.current) return
     if (error) {
       console.error('Erro ao carregar relatório:', error)
       alert(error.message || 'Erro ao carregar relatório.')
@@ -133,6 +218,7 @@ function Relatorios({ empresaAtiva }) {
     let erroVendas = null
     const tamanhoPagina = 1000
     for (let inicio = 0; ; inicio += tamanhoPagina) {
+      if (requisicao !== consultaAtual.current) return
       let consulta = supabase
         .from('movimentacoes')
         .select(`
@@ -146,7 +232,7 @@ function Relatorios({ empresaAtiva }) {
             valor_unitario
           )
         `)
-        .eq('empresa_id', empresaAtiva.id)
+        .eq('empresa_id', empresaId)
         .eq('tipo', 'saida')
         .gte('data_movimentacao', dataInicial)
         .lte('data_movimentacao', dataFinal)
@@ -160,6 +246,7 @@ function Relatorios({ empresaAtiva }) {
       }
       // No caso de "Não informado", a filtragem final também cobre strings vazias/espaços.
       const { data: pagina, error: erroPagina } = await consulta
+      if (requisicao !== consultaAtual.current) return
       if (erroPagina) {
         erroVendas = erroPagina
         break
@@ -198,10 +285,22 @@ function Relatorios({ empresaAtiva }) {
         canalVenda: venda.canal_venda || '',
       }))
 
+    if (requisicao !== consultaAtual.current) return
     setRelatorioPorProduto(relatorioFormatado)
     setVendasDetalhadas(vendasFormatadas)
     setCarregandoRelatorio(false)
-  }
+  }, [empresaId, dataInicial, dataFinal, buscaProduto, canalSelecionado])
+
+  useEffect(() => {
+    // Pequeno debounce evita consultas repetidas durante a digitação dos filtros.
+    const temporizador = setTimeout(() => {
+      if (empresaId && dataInicial && dataFinal) void carregarRelatorio()
+    }, 180)
+    return () => {
+      clearTimeout(temporizador)
+      consultaAtual.current += 1
+    }
+  }, [empresaId, dataInicial, dataFinal, carregarRelatorio])
 
   function formatarDataBrasil(data) {
     if (!data) return '-'
@@ -365,75 +464,6 @@ function Relatorios({ empresaAtiva }) {
     percentual: totalUnidadesCanais ? (canal.total / totalUnidadesCanais) * 100 : 0,
     cor: coresCanais[index % coresCanais.length],
   }))
-
-  function GraficoRoscaCanais() {
-    // O gráfico usa unidades movimentadas, não faturamento nem número de lançamentos.
-    const raio = 76
-    const circunferencia = 2 * Math.PI * raio
-    let posicaoAtual = 0
-
-    return (
-      <div className="flex flex-col items-center justify-center gap-5 sm:flex-row lg:flex-col xl:flex-row">
-        <div className="relative h-36 w-36 shrink-0 sm:h-40 sm:w-40" role="img" aria-label={`Distribuição de ${formatarQuantidade(totalUnidadesCanais)} unidades por canal de venda`}>
-          <svg viewBox="0 0 200 200" className="h-full w-full" aria-hidden="true">
-            <circle cx="100" cy="100" r={raio} fill="none" stroke="#e2e8f0" strokeWidth="22" />
-            {distribuicaoCanais.map((canal) => {
-              const comprimento = (canal.percentual / 100) * circunferencia
-              const deslocamento = posicaoAtual
-              posicaoAtual += comprimento
-              return (
-                <circle
-                  key={canal.canal}
-                  cx="100"
-                  cy="100"
-                  r={raio}
-                  fill="none"
-                  stroke={canal.cor}
-                  strokeWidth="22"
-                  strokeDasharray={`${comprimento} ${circunferencia - comprimento}`}
-                  strokeDashoffset={-deslocamento}
-                  transform="rotate(-90 100 100)"
-                >
-                  <title>{`${canal.canal}: ${formatarQuantidade(canal.total)} unidades (${canal.percentual.toFixed(1)}%)`}</title>
-                </circle>
-              )
-            })}
-          </svg>
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-            <strong className="text-2xl font-extrabold tracking-tight text-slate-900">{formatarQuantidade(totalUnidadesCanais)}</strong>
-            <span className="mt-1 text-xs font-medium text-slate-500">unidades</span>
-          </div>
-        </div>
-        <div className="w-full min-w-0 max-w-xs space-y-3 px-2 sm:w-auto sm:flex-1 sm:px-0">
-          {distribuicaoCanais.map((canal) => (
-            <div key={canal.canal} className="flex items-center gap-3 text-sm">
-              <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: canal.cor }} />
-              <span className="min-w-0 flex-1 truncate font-medium text-slate-700" title={canal.canal}>{canal.canal}</span>
-              <strong className="shrink-0 tabular-nums text-slate-900">{canal.percentual.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  function StatusEstoque({ item }) {
-    const baixoEstoque = item.estoqueAtual < item.estoqueMinimo
-
-    if (baixoEstoque) {
-      return (
-        <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
-          Baixo estoque
-        </span>
-      )
-    }
-
-    return (
-      <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
-        Normal
-      </span>
-    )
-  }
 
   function gerarPdfRelatorio() {
     const pdf = new jsPDF('p', 'mm', 'a4')
@@ -785,7 +815,8 @@ function Relatorios({ empresaAtiva }) {
   ]
 
   return (
-    <section className="min-w-0 bg-transparent pb-8">
+    <section className="efr-report min-w-0 bg-transparent pb-8">
+      <style>{ESTILOS_GRAFICOS}</style>
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.24em] text-blue-600">Análise e inteligência</p>
@@ -877,7 +908,7 @@ function Relatorios({ empresaAtiva }) {
                 Carregando gráfico...
               </div>
             ) : dadosGraficoMaisVendidos.length > 0 ? (
-              <div className="mt-5 max-h-[340px] overflow-y-auto overflow-x-hidden rounded-xl bg-white pr-1">
+              <div className="efr-chart-frame mt-5 max-h-[340px] overflow-y-auto overflow-x-hidden rounded-xl bg-white pr-1">
                 {/* No celular as barras usam layout nativo: sem rolagem lateral ou nomes cortados. */}
                 <div className="space-y-4 p-4 sm:hidden">
                   {dadosGraficoMaisVendidos.map((item) => {
@@ -885,10 +916,10 @@ function Relatorios({ empresaAtiva }) {
                     return (
                       <div key={item.produtoId} className="min-w-0">
                         <div className="mb-1.5 flex items-start justify-between gap-3 text-sm">
-                          <span className="min-w-0 break-words font-semibold leading-snug text-slate-700">{item.nomeCompleto}</span>
-                          <strong className="shrink-0 tabular-nums text-slate-900">{formatarQuantidade(item.saidas)}</strong>
+                          <span className="efr-chart-label min-w-0 break-words font-semibold leading-snug text-slate-700">{item.nomeCompleto}</span>
+                          <strong className="efr-chart-label shrink-0 tabular-nums text-slate-900">{formatarQuantidade(item.saidas)}</strong>
                         </div>
-                        <div className="h-3.5 overflow-hidden rounded-full bg-slate-100">
+                        <div className="efr-mobile-track h-3.5 overflow-hidden rounded-full bg-slate-100">
                           <div className="h-full rounded-full bg-blue-600" style={{ width: `${(item.saidas / maior) * 100}%` }} />
                         </div>
                       </div>
@@ -903,12 +934,12 @@ function Relatorios({ empresaAtiva }) {
                       margin={{ top: 6, right: 73, left: 4, bottom: 8 }}
                       barCategoryGap="24%"
                     >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--efr-grid)" horizontal={false} />
                       <XAxis
                         type="number"
                         allowDecimals={false}
-                        tick={{ fill: '#475569', fontSize: 13 }}
-                        axisLine={{ stroke: '#cbd5e1' }}
+                        tick={{ fill: 'var(--efr-axis-muted)', fontSize: 13 }}
+                        axisLine={{ stroke: 'var(--efr-grid)' }}
                         tickLine={false}
                         tickFormatter={(value) => Number(value).toLocaleString('pt-BR')}
                       />
@@ -919,17 +950,19 @@ function Relatorios({ empresaAtiva }) {
                         interval={0}
                         tickLine={false}
                         axisLine={false}
-                        tick={{ fill: '#334155', fontSize: 12, fontWeight: 500 }}
+                        tick={{ fill: 'var(--efr-axis)', fontSize: 12, fontWeight: 500 }}
                         tickFormatter={(id) => nomesProdutosGrafico.get(id) || id}
                       />
                       <Tooltip
-                        cursor={{ fill: '#eff6ff' }}
+                        cursor={{ fill: 'var(--efr-hover)' }}
                         formatter={(value) => [Number(value).toLocaleString('pt-BR'), 'Saídas']}
                         labelFormatter={(id) => nomesProdutosGrafico.get(id) || ''}
                         contentStyle={{
                           borderRadius: '12px',
-                          border: '1px solid #e2e8f0',
-                          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                          backgroundColor: 'var(--efr-tooltip-bg)',
+                          color: 'var(--efr-tooltip-text)',
+                          border: '1px solid var(--efr-tooltip-border)',
+                          boxShadow: 'var(--efr-tooltip-shadow)',
                         }}
                       />
                       <Bar
@@ -938,10 +971,10 @@ function Relatorios({ empresaAtiva }) {
                         fill="#2563eb"
                         radius={[0, 7, 7, 0]}
                         maxBarSize={22}
-                        background={{ fill: '#f1f5f9', radius: 7 }}
+                        background={{ fill: 'var(--efr-track)', radius: 7 }}
                         label={{
                           position: 'right',
-                          fill: '#334155',
+                          fill: 'var(--efr-axis)',
                           fontSize: 12,
                           fontWeight: 600,
                           formatter: (value) => Number(value).toLocaleString('pt-BR'),
@@ -965,7 +998,7 @@ function Relatorios({ empresaAtiva }) {
           {carregandoRelatorio ? (
             <p className="mt-6 rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Carregando canais...</p>
           ) : totalUnidadesCanais > 0 ? (
-            <div className="mt-6 flex min-h-[230px] items-center justify-center"><GraficoRoscaCanais /></div>
+            <div className="mt-6 flex min-h-[230px] items-center justify-center"><GraficoRoscaCanais distribuicaoCanais={distribuicaoCanais} totalUnidadesCanais={totalUnidadesCanais} /></div>
           ) : (
             <p className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
               Nenhuma saída encontrada para os filtros selecionados.
@@ -1038,6 +1071,10 @@ function Relatorios({ empresaAtiva }) {
 
     </section>
   )
+}
+
+function Relatorios({ empresaAtiva }) {
+  return <RelatoriosConteudo key={empresaAtiva?.id || 'sem-empresa'} empresaAtiva={empresaAtiva} />
 }
 
 export default Relatorios
