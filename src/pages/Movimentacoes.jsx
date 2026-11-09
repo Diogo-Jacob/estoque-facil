@@ -128,7 +128,7 @@ function Movimentacoes({
     data: new Date().toISOString().split('T')[0],
     quantidade: '',
     canalVenda: '',
-    valorUnitario: '',
+    valorLiquidoVenda: '',
     observacao: '',
   })
 
@@ -139,11 +139,15 @@ function Movimentacoes({
     { valor: 'emplajoi', nome: 'Emplajoi' },
     { valor: 'fecha_molde', nome: 'Fecha Molde' },
     { valor: 'shopee', nome: 'Shopee' },
+    { valor: 'full_emplajoi', nome: 'Full Emplajoi' },
+    { valor: 'full_dega_moto_parts', nome: 'Full Dega Moto Parts' },
   ]
 
   const canaisVendaSdPlasticos = [
     { valor: 'mercado_livre', nome: 'Mercado Livre' },
     { valor: 'zeca', nome: 'Zeca' },
+    { valor: 'andre', nome: 'Andre' },
+    { valor: 'gilmar', nome: 'Gilmar' },
   ]
 
   const empresaEhDega = nomeEmpresaAtiva.includes('dega')
@@ -232,9 +236,17 @@ function Movimentacoes({
 
   const quantidadeInformada = Number(novaMovimentacao.quantidade || 0)
   const precoPadrao = Number(produtoSelecionado?.valorUnitario ?? produtoSelecionado?.valor_unitario ?? 0)
-  const precoDigitado = novaMovimentacao.valorUnitario.trim()
-  const precoEfetivo = precoDigitado === '' ? precoPadrao : Number(precoDigitado.replace(',', '.'))
-  const valorTotal = quantidadeInformada > 0 && Number.isFinite(precoEfetivo) ? quantidadeInformada * precoEfetivo : 0
+  // A SD informa o valor líquido TOTAL da venda, não o preço por peça.
+  // O banco já registra valor_unitario: derivamos esse valor para manter
+  // a compatibilidade com os relatórios existentes.
+  const valorLiquidoDigitado = novaMovimentacao.valorLiquidoVenda.trim()
+  const valorLiquidoNumero = valorLiquidoDigitado === ''
+    ? null
+    : Number(valorLiquidoDigitado.replace(',', '.'))
+  const valorTotal = valorLiquidoNumero === null
+    ? quantidadeInformada * precoPadrao
+    : valorLiquidoNumero
+  const precoEfetivo = quantidadeInformada > 0 ? valorTotal / quantidadeInformada : 0
   const mostrarPreco = empresaEhSdPlasticos && novaMovimentacao.tipo === 'saida'
   const formatarNumero = (numero) => Number(numero || 0).toLocaleString('pt-BR')
   const formatarMoeda = (numero) => Number(numero || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -426,11 +438,11 @@ function Movimentacoes({
       alert('Informe uma quantidade inteira de unidades.')
       return
     }
-    // Preserva os preços fracionários dos produtos industriais.
-    // Rejeita valores negativos, texto inválido e mais de seis casas decimais.
-    const precoInformadoValido = precoDigitado === '' || /^(?:\d+(?:[.,]\d{1,6})?|[.,]\d{1,6})$/.test(precoDigitado)
-    if (mostrarPreco && (!precoInformadoValido || !Number.isFinite(precoEfetivo) || precoEfetivo < 0)) {
-      alert('Informe um preço unitário válido com até seis casas decimais.')
+    // Valor líquido é o total recebido pela venda, em reais e centavos.
+    // O preço unitário derivado pode ter mais de seis casas decimais.
+    const valorLiquidoValido = valorLiquidoDigitado === '' || /^(?:\d+(?:[.,]\d{1,2})?|[.,]\d{1,2})$/.test(valorLiquidoDigitado)
+    if (mostrarPreco && (!valorLiquidoValido || !Number.isFinite(valorTotal) || valorTotal < 0 || !Number.isFinite(precoEfetivo))) {
+      alert('Informe o valor líquido TOTAL da venda, com até duas casas decimais.')
       return
     }
     setSalvando(true)
@@ -482,7 +494,7 @@ function Movimentacoes({
       data: new Date().toISOString().split('T')[0],
       quantidade: '',
       canalVenda: '',
-      valorUnitario: '',
+      valorLiquidoVenda: '',
       observacao: '',
     })
 
@@ -550,8 +562,8 @@ function Movimentacoes({
         {produtoSelecionado ? <>
           <div className="mt-5 flex items-center gap-3 border-b border-slate-100 pb-5"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><Icone nome="caixa" size={24}/></div><div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-wide text-blue-600">{produtoSelecionado.codigo || 'Produto'}</p><p className="truncate text-sm font-bold text-slate-900">{produtoSelecionado.nome}</p><p className="text-xs text-slate-400">{produtoSelecionado.categoria || 'Estoque'}</p></div></div>
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-slate-100 py-5"><div className="text-center"><p className="text-[11px] text-slate-400">Estoque atual</p><p className="mt-2 text-xl font-extrabold text-slate-900 lg:text-2xl">{formatarNumero(produtoSelecionado.estoqueAtual)}</p><p className="text-[11px] text-slate-400">unidades</p></div><Icone nome="seta" size={20} className="text-slate-400"/><div className={`rounded-xl px-2 py-4 text-center ${estoqueAposMovimentacao < 0 ? 'bg-red-50' : 'bg-emerald-50'}`}><p className="text-[11px] text-slate-500">Estoque previsto</p><p className={`mt-2 text-xl font-extrabold lg:text-2xl ${estoqueAposMovimentacao < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{formatarNumero(quantidadeInformada > 0 ? estoqueAposMovimentacao : produtoSelecionado.estoqueAtual)}</p><p className="text-[11px] text-slate-400">unidades</p></div></div>
-          <div className="space-y-3 py-5 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Quantidade</span><strong className="text-slate-800">{formatarNumero(quantidadeInformada)} un.</strong></div>{mostrarPreco && <><div className="flex justify-between gap-3"><span className="text-slate-500">Valor unitário efetivo</span><strong className="text-slate-800">{formatarPrecoUnitario(precoEfetivo)}</strong></div><div className="flex justify-between gap-3 border-t border-slate-100 pt-3"><span className="text-slate-500">Valor total</span><strong className="text-lg text-blue-600">{formatarMoeda(valorTotal)}</strong></div></>}</div>
-          {mostrarPreco && <div className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-500"><Icone nome="escudo" size={18} className="shrink-0 text-blue-600"/>O preço personalizado vale somente para esta saída e não altera o cadastro do produto.</div>}
+          <div className="space-y-3 py-5 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Quantidade</span><strong className="text-slate-800">{formatarNumero(quantidadeInformada)} un.</strong></div>{mostrarPreco && <><div className="flex justify-between gap-3"><span className="text-slate-500">Valor unitário calculado</span><strong className="text-slate-800">{formatarPrecoUnitario(precoEfetivo)}</strong></div><div className="flex justify-between gap-3 border-t border-slate-100 pt-3"><span className="text-slate-500">Valor líquido da venda</span><strong className="text-lg text-blue-600">{formatarMoeda(valorTotal)}</strong></div></>}</div>
+          {mostrarPreco && <div className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-500"><Icone nome="escudo" size={18} className="shrink-0 text-blue-600"/>O valor líquido informado vale somente para esta saída. O valor unitário é calculado automaticamente dividindo o total pela quantidade, sem alterar o cadastro do produto.</div>}
           {ficaraAbaixoDoMinimo && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-medium text-amber-800">Atenção: a saída deixará o estoque abaixo do mínimo cadastrado.</p>}
         </> : <div className="mt-5 flex items-center gap-3 rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500"><Icone nome="caixa" size={24} className="shrink-0 text-blue-500"/>Selecione um produto para visualizar o estoque atual e a previsão da operação.</div>}
       </aside>
@@ -564,7 +576,7 @@ function Movimentacoes({
         <form onSubmit={(event) => { event.preventDefault(); if (!salvando) salvarMovimentacao() }} className="mt-5 space-y-4">
           <div><label className={rotulo}>Produto</label><div className="relative"><div className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="caixa" size={18}/></div><input type="text" autoComplete="off" value={buscaProdutoMovimentacao} onChange={event => {setBuscaProdutoMovimentacao(event.target.value); atualizarCampo('produtoId',''); setMostrarSugestoesProduto(true)}} onFocus={()=>setMostrarSugestoesProduto(true)} placeholder="Selecione ou busque um produto" className={`${campo} pl-10 pr-10`}/><div className="pointer-events-none absolute right-3 top-[22px] text-slate-400"><Icone nome="chevron" size={17}/></div>{mostrarSugestoesProduto && <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">{produtosFiltradosMovimentacao.length ? produtosFiltradosMovimentacao.map(produto=><button type="button" key={produto.id} onClick={()=>selecionarProduto(produto)} className="w-full border-b border-slate-100 p-3 text-left last:border-0 hover:bg-blue-50"><p className="text-sm font-semibold text-slate-800">{produto.nome}</p><p className="text-xs text-slate-400">{produto.codigo || ''} · Estoque: {formatarNumero(produto.estoqueAtual)}</p></button>) : <p className="p-4 text-sm text-slate-500">Nenhum produto encontrado.</p>}</div>}</div></div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><div><label className={rotulo}>Quantidade</label><div className="relative"><input type="number" min="1" step="1" required value={novaMovimentacao.quantidade} onChange={event=>atualizarCampo('quantidade',event.target.value)} placeholder="0" className={`${campo} pr-12`}/><span className="pointer-events-none absolute right-4 top-[22px] text-xs text-slate-400">un.</span></div></div><div><label className={rotulo}>Data da movimentação</label><input type="date" required value={novaMovimentacao.data} onChange={event=>atualizarCampo('data',event.target.value)} className={campo}/></div></div>
-          {novaMovimentacao.tipo === 'saida' && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{empresaUsaCanalVenda && <div><label className={rotulo}>Canal de venda</label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="carrinho" size={16}/></span><select value={novaMovimentacao.canalVenda} onChange={event=>atualizarCampo('canalVenda',event.target.value)} className={`${campo} pl-9`}><option value="">Sem canal</option>{canaisVenda.map(canal=><option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}</select></div></div>}{empresaEhSdPlasticos && <div><label className={rotulo}>Valor unitário personalizado <span className="font-normal text-slate-400">Opcional</span></label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-xs text-slate-400">R$</span><input type="text" inputMode="decimal" value={novaMovimentacao.valorUnitario} onChange={event=>atualizarCampo('valorUnitario',event.target.value)} placeholder={precoPadrao.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 })} className={`${campo} pl-10`}/></div><p className="mt-1 text-[11px] text-slate-400">Vazio utiliza o preço padrão de {formatarPrecoUnitario(precoPadrao)}</p></div>}</div>}
+          {novaMovimentacao.tipo === 'saida' && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{empresaUsaCanalVenda && <div><label className={rotulo}>Canal de venda</label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-slate-400"><Icone nome="carrinho" size={16}/></span><select value={novaMovimentacao.canalVenda} onChange={event=>atualizarCampo('canalVenda',event.target.value)} className={`${campo} pl-9`}><option value="">Sem canal</option>{canaisVenda.map(canal=><option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}</select></div></div>}{empresaEhSdPlasticos && <div><label className={rotulo}>Valor líquido da venda (total) <span className="font-normal text-slate-400">Opcional</span></label><div className="relative"><span className="pointer-events-none absolute left-3 top-[22px] text-xs text-slate-400">R$</span><input type="text" inputMode="decimal" value={novaMovimentacao.valorLiquidoVenda} onChange={event=>atualizarCampo('valorLiquidoVenda',event.target.value)} placeholder={quantidadeInformada > 0 ? (quantidadeInformada * precoPadrao).toFixed(2).replace('.', ',') : '0,00'} className={`${campo} pl-10`}/></div><p className="mt-1 text-[11px] text-slate-400">Informe o total líquido recebido; o preço por peça será calculado automaticamente. Vazio usa o preço padrão do produto.</p></div>}</div>}
           <div><label className={rotulo}>Observação <span className="font-normal text-slate-400">Opcional</span></label><textarea rows={3} value={novaMovimentacao.observacao} onChange={event=>atualizarCampo('observacao',event.target.value)} placeholder="Adicione informações relevantes para esta movimentação..." className={`${campo} resize-y`}/></div>
           {saidaMaiorQueEstoque && <p className="rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-700">A quantidade informada supera o estoque disponível.</p>}
           <button type="submit" disabled={salvando || saidaMaiorQueEstoque} className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-blue-100 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><Icone nome="check" size={18}/>{salvando ? 'Salvando…' : `Confirmar ${novaMovimentacao.tipo}`}</button>
