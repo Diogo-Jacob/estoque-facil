@@ -148,6 +148,8 @@ function RelatoriosConteudo({ empresaAtiva }) {
   const [tipoSelecionado, setTipoSelecionado] = useState('todos')
   const [relatorioDados, setRelatorioPorProduto] = useState([])
   const [vendasDados, setVendasDetalhadas] = useState([])
+  const [totalDespesasPeriodo, setTotalDespesasPeriodo] = useState(null)
+  const [erroDespesas, setErroDespesas] = useState('')
   const [carregandoRelatorio, setCarregandoRelatorio] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
   const consultaAtual = useRef(0)
@@ -178,11 +180,15 @@ function RelatoriosConteudo({ empresaAtiva }) {
     if (dataInicial > dataFinal) {
       setRelatorioPorProduto([])
       setVendasDetalhadas([])
+      setTotalDespesasPeriodo(null)
+      setErroDespesas('')
       alert('A data inicial não pode ser maior que a data final.')
       return
     }
 
     setCarregandoRelatorio(true)
+    setTotalDespesasPeriodo(null)
+    setErroDespesas('')
 
     const { data, error } = await supabase.rpc('relatorio_produtos_por_canal', {
       p_empresa_id: empresaId,
@@ -285,11 +291,43 @@ function RelatoriosConteudo({ empresaAtiva }) {
         canalVenda: venda.canal_venda || '',
       }))
 
+    // As despesas seguem o mesmo intervalo de datas, mas não os filtros de produto/canal:
+    // são despesas da empresa inteira. Nenhum valor é inventado em caso de falha.
+    let despesasPeriodo = null
+    let erroAoCarregarDespesas = ''
+    if (!empresaEhDega) {
+      try {
+        const tamanhoPaginaDespesas = 1000
+        let somaDespesas = 0
+        for (let inicio = 0; ; inicio += tamanhoPaginaDespesas) {
+          if (requisicao !== consultaAtual.current) return
+          const { data: pagina, error: erroPagina } = await supabase
+            .from('despesas')
+            .select('id,valor')
+            .eq('empresa_id', empresaId)
+            .gte('data_despesa', dataInicial)
+            .lte('data_despesa', dataFinal)
+            .order('id', { ascending: true })
+            .range(inicio, inicio + tamanhoPaginaDespesas - 1)
+          if (requisicao !== consultaAtual.current) return
+          if (erroPagina) throw erroPagina
+          somaDespesas += (pagina || []).reduce((total, despesa) => total + Number(despesa.valor || 0), 0)
+          if (!pagina || pagina.length < tamanhoPaginaDespesas) break
+        }
+        despesasPeriodo = somaDespesas
+      } catch (erro) {
+        console.error('Erro ao carregar despesas do relatório:', erro)
+        erroAoCarregarDespesas = 'Não foi possível consultar as despesas. O saldo após despesas está indisponível.'
+      }
+    }
+
     if (requisicao !== consultaAtual.current) return
     setRelatorioPorProduto(relatorioFormatado)
     setVendasDetalhadas(vendasFormatadas)
+    setTotalDespesasPeriodo(despesasPeriodo)
+    setErroDespesas(erroAoCarregarDespesas)
     setCarregandoRelatorio(false)
-  }, [empresaId, dataInicial, dataFinal, buscaProduto, canalSelecionado])
+  }, [empresaId, empresaEhDega, dataInicial, dataFinal, buscaProduto, canalSelecionado])
 
   useEffect(() => {
     // Pequeno debounce evita consultas repetidas durante a digitação dos filtros.
@@ -351,12 +389,13 @@ function RelatoriosConteudo({ empresaAtiva }) {
 
   // Valores são calculados a partir das saídas originais não estornadas.
   // As novas saídas possuem preço histórico real; antigas usam preço atual apenas como estimativa.
-  const vendasComPreco = vendasDetalhadas.filter((venda) => venda.precoRegistrado)
-  const vendasSemPreco = vendasDetalhadas.filter((venda) => !venda.precoRegistrado)
+  const vendasComPreco = vendasDados.filter((venda) => venda.precoRegistrado)
+  const vendasSemPreco = vendasDados.filter((venda) => !venda.precoRegistrado)
   const valorConfirmado = vendasComPreco.reduce((total, venda) => total + venda.valorTotal, 0)
   const valorEstimado = vendasSemPreco.reduce((total, venda) => total + venda.valorTotal, 0)
   const totalValorVendido = valorConfirmado + valorEstimado
   const temEstimativas = vendasSemPreco.length > 0
+  const saldoAposDespesas = totalDespesasPeriodo === null ? null : totalValorVendido - totalDespesasPeriodo
 
   const valoresPorProduto = vendasDetalhadas.reduce((valores, venda) => {
     const anterior = valores[venda.produtoId] || { confirmado: 0, estimado: 0 }
@@ -808,8 +847,18 @@ function RelatoriosConteudo({ empresaAtiva }) {
   const resumoCards = [
     { titulo: 'Total de entradas', valor: formatarQuantidade(totalEntradas), detalhe: 'unidades no período', icone: 'entrada', cor: 'text-blue-600 bg-blue-50' },
     { titulo: 'Total de saídas', valor: formatarQuantidade(totalSaidas), detalhe: 'unidades no período', icone: 'saida', cor: 'text-rose-500 bg-rose-50' },
-    { titulo: 'Saldo líquido', valor: `${totalEntradas - totalSaidas >= 0 ? '+' : ''}${formatarQuantidade(totalEntradas - totalSaidas)}`, detalhe: 'entradas menos saídas', icone: 'saldo', cor: 'text-emerald-600 bg-emerald-50' },
-    ...(!empresaEhDega ? [{ titulo: temEstimativas ? 'Valor total (misto)' : 'Valor histórico das saídas', valor: formatarMoeda(totalValorVendido), detalhe: temEstimativas ? `${vendasSemPreco.length} saída(s) estimada(s) • ${vendasComPreco.length} com preço real` : 'preços registrados nas saídas', icone: 'financeiro', cor: 'text-violet-600 bg-violet-50' }] : [
+    ...(!empresaEhDega ? [
+      {
+        titulo: 'Saldo após despesas',
+        valor: saldoAposDespesas === null ? '—' : formatarMoeda(saldoAposDespesas),
+        detalhe: saldoAposDespesas === null
+          ? 'Despesas indisponíveis'
+          : `Vendas − ${formatarMoeda(totalDespesasPeriodo)} em despesas; sem custos de produção`,
+        icone: 'saldo',
+        cor: 'text-emerald-600 bg-emerald-50',
+      },
+      { titulo: temEstimativas ? 'Valor faturado' : 'Valor histórico das saídas', valor: formatarMoeda(totalValorVendido), detalhe: temEstimativas ? `${vendasSemPreco.length} saída(s) estimada(s) • ${vendasComPreco.length} com preço real` : 'preços registrados nas saídas', icone: 'financeiro', cor: 'text-violet-600 bg-violet-50' },
+    ] : [
       { titulo: 'Produtos com estoque baixo', valor: formatarQuantidade(produtosComEstoqueBaixo.length), detalhe: 'dos produtos encontrados', icone: 'alerta', cor: 'text-amber-600 bg-amber-50' },
     ]),
   ]
@@ -817,6 +866,7 @@ function RelatoriosConteudo({ empresaAtiva }) {
   return (
     <section className="efr-report min-w-0 bg-transparent pb-8">
       <style>{ESTILOS_GRAFICOS}</style>
+      {erroDespesas && <p role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{erroDespesas}</p>}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.24em] text-blue-600">Análise e inteligência</p>
