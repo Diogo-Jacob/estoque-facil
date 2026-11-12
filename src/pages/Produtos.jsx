@@ -16,12 +16,13 @@ function StatusProduto({ produto }) {
   return <span className="efp-status efp-normal"><i />Normal</span>
 }
 
-function MenuAcoes({ produto, menuAbertoProdutoId, onAlternarMenu, onEditar, onAlterarStatus }) {
+function MenuAcoes({ produto, menuAbertoProdutoId, onAlternarMenu, onEditar, onAlterarStatus, onArquivar, empresaSd, arquivado, ocupada }) {
   return <div className="efp-menu-anchor">
     <button type="button" className="efp-more" aria-label={`Opções de ${produto.nome}`} onClick={() => onAlternarMenu(produto.id)}>•••</button>
     {menuAbertoProdutoId === produto.id && <div className="efp-dropdown efp-action-dropdown">
-      <button type="button" onClick={() => onEditar(produto)}>Editar produto</button>
-      <button type="button" onClick={() => onAlterarStatus(produto, !produto.ativo)}>{produto.ativo ? 'Inativar produto' : 'Reativar produto'}</button>
+      <button type="button" onClick={() => onEditar(produto)} disabled={ocupada || arquivado}>Editar produto</button>
+      <button type="button" onClick={() => onAlterarStatus(produto, !produto.ativo)} disabled={ocupada || arquivado}>{produto.ativo ? 'Inativar produto' : 'Reativar produto'}</button>
+      {empresaSd && <button type="button" disabled={ocupada} onClick={() => onArquivar(produto, !arquivado)}>{arquivado ? 'Restaurar produto' : 'Arquivar produto'}</button>}
     </div>}
   </div>
 }
@@ -30,6 +31,12 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   const [busca, setBusca] = useState('')
   const [filtroCategoria, setFiltroCategoria] = useState('')
   const [filtroStatus, setFiltroStatus] = useState('')
+  const [exibirArquivados, setExibirArquivados] = useState(false)
+  const [idsArquivados, setIdsArquivados] = useState(new Set())
+  const [arquivadosExtras, setArquivadosExtras] = useState([])
+  const [carregandoArquivados, setCarregandoArquivados] = useState(false)
+  const [operandoArquivoId, setOperandoArquivoId] = useState(null)
+  const [erroArquivamento, setErroArquivamento] = useState('')
   const [mostrarMaisFiltros, setMostrarMaisFiltros] = useState(false)
   const [somenteEmProducao, setSomenteEmProducao] = useState(false)
   const [organizando, setOrganizando] = useState(false)
@@ -57,6 +64,65 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
   const [composicaoExistente, setComposicaoExistente] = useState(false)
   const [composicaoAlterada, setComposicaoAlterada] = useState(false)
 
+  // Busca o estado de arquivamento diretamente do banco. A lista recebida do App
+  // pode não conter a coluna arquivado ou até omitir produtos inativos.
+  useEffect(() => {
+    if (!empresaSd) return
+    let ativo = true
+    void Promise.resolve().then(async () => {
+      if (!ativo) return
+      setCarregandoArquivados(true)
+      setErroArquivamento('')
+      const { data, error } = await supabase.from('produtos')
+        .select('id,nome,codigo,categoria,estoque_atual,estoque_minimo,valor_unitario,observacao,ativo,em_producao,ordem_exibicao,arquivado')
+        .eq('empresa_id', EMPRESA_SD)
+        .eq('arquivado', true)
+        .order('nome')
+      if (!ativo) return
+      if (error) {
+        setErroArquivamento(`Não foi possível consultar os produtos arquivados: ${error.message}`)
+      } else {
+        setIdsArquivados(new Set((data || []).map((item) => item.id)))
+        setArquivadosExtras((data || []).map((item) => ({
+          id: item.id, empresaId: EMPRESA_SD, nome: item.nome,
+          codigo: item.codigo || 'Sem código', categoria: item.categoria || 'Sem categoria',
+          estoqueAtual: item.estoque_atual, estoqueMinimo: item.estoque_minimo,
+          valorUnitario: Number(item.valor_unitario || 0), observacao: item.observacao || '',
+          ativo: item.ativo, emProducao: item.em_producao || false,
+          ordemExibicao: item.ordem_exibicao ?? 9999, arquivado: true,
+        })))
+      }
+      setCarregandoArquivados(false)
+    })
+    return () => { ativo = false }
+  }, [empresaSd])
+
+  async function definirArquivamento(produto, arquivar) {
+    if (!empresaSd || operandoArquivoId !== null) return
+    if (arquivar && !window.confirm(`Arquivar "${produto.nome}"? O produto ficará oculto da lista principal, mas as movimentações antigas serão preservadas.`)) return
+    setOperandoArquivoId(produto.id)
+    setErroArquivamento('')
+    const { error } = await supabase.rpc('definir_arquivamento_produto', {
+      p_produto_id: produto.id, p_arquivado: arquivar,
+    })
+    if (error) {
+      setErroArquivamento(`Não foi possível ${arquivar ? 'arquivar' : 'restaurar'} o produto: ${error.message}`)
+    } else {
+      setIdsArquivados((anteriores) => {
+        const atualizados = new Set(anteriores)
+        if (arquivar) atualizados.add(produto.id)
+        else atualizados.delete(produto.id)
+        return atualizados
+      })
+      setArquivadosExtras((anteriores) => [
+        ...anteriores.filter((item) => item.id !== produto.id),
+        { ...produto, arquivado: arquivar },
+      ])
+    }
+    setMenuAbertoProdutoId(null)
+    setOperandoArquivoId(null)
+  }
+
   const [formProduto, setFormProduto] = useState({
     nome: '',
     codigo: '',
@@ -78,14 +144,32 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
     })
   }
 
+  // Valor comercial a preço de tabela, somente para itens ativos e disponíveis.
+  // Independe dos filtros da listagem: o indicador sempre representa todo o estoque da SD.
+  const resumoValorEstoque = useMemo(() => {
+    const disponiveis = produtos.filter((produto) => produto.ativo !== false && !idsArquivados.has(produto.id) && Number(produto.estoqueAtual) > 0)
+    const semPreco = disponiveis.filter((produto) => !(Number(produto.valorUnitario) > 0))
+    const valor = disponiveis.reduce((soma, produto) => {
+      const preco = Number(produto.valorUnitario)
+      const quantidade = Number(produto.estoqueAtual)
+      return soma + (Number.isFinite(preco) && preco > 0 && Number.isFinite(quantidade) ? quantidade * preco : 0)
+    }, 0)
+    return { valor, totalProdutos: disponiveis.length, semPreco: semPreco.length }
+  }, [produtos, idsArquivados])
+
+  const produtosExibiveis = empresaSd
+    ? [...new Map([...produtos, ...arquivadosExtras].map((item) => [item.id, item])).values()]
+    : produtos
+
   const categoriasProdutos = [...new Set(produtos.map(p => p.categoria).filter(c => c && c !== 'Sem categoria'))].sort((a,b) => a.localeCompare(b, 'pt-BR'))
-  const produtosFiltrados = produtos.filter((produto) => {
+  const produtosFiltrados = produtosExibiveis.filter((produto) => {
     const termo = busca.trim().toLowerCase()
     const nome = String(produto.nome || '').toLowerCase()
     const codigo = String(produto.codigo || '').toLowerCase()
     const categoria = String(produto.categoria || '').toLowerCase()
     const status = !produto.ativo ? 'inativo' : Number(produto.estoqueAtual || 0) === 0 ? 'zerado' : Number(produto.estoqueAtual || 0) < Number(produto.estoqueMinimo || 0) ? 'baixo' : 'normal'
-    return (!termo || nome.includes(termo) || codigo.includes(termo) || categoria.includes(termo))
+    return (!empresaSd || idsArquivados.has(produto.id) === exibirArquivados)
+      && (!termo || nome.includes(termo) || codigo.includes(termo) || categoria.includes(termo))
       && (!filtroCategoria || produto.categoria === filtroCategoria)
       && (!filtroStatus || filtroStatus === status)
       && (!somenteEmProducao || produto.emProducao)
@@ -603,6 +687,17 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
     .efp .efp-btn:hover{background:var(--pc-hover)}
     .efp .efp-btn-primary{background:var(--pc-blue);border-color:var(--pc-blue);color:white;box-shadow:0 5px 12px #3261f41c}
     .efp .efp-btn-primary:hover{background:#244fdb}
+    .efp .efp-archive-toggle{height:37px;padding:0 12px;border:1px solid var(--pc-border);border-radius:9px;background:var(--pc-surface);color:var(--pc-text);font-size:11px;font-weight:700}
+    .efp .efp-archive-toggle[aria-pressed=true]{background:var(--pc-soft);color:var(--pc-blue);border-color:var(--pc-blue)}
+    .efp .efp-stock-value{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:20px 22px;border:1px solid var(--pc-border);border-radius:13px;background:var(--pc-surface);box-shadow:0 7px 30px #1c3e7308;margin-bottom:21px}
+    .efp .efp-stock-value-copy{min-width:0}
+    .efp .efp-stock-value-label{font-size:10px;letter-spacing:.12em;font-weight:800;color:var(--pc-muted);text-transform:uppercase}
+    .efp .efp-stock-value-number{font-size:clamp(24px,3vw,35px);font-weight:850;line-height:1.25;letter-spacing:-.7px;color:var(--pc-text);margin:6px 0}
+    .efp .efp-stock-value-description{font-size:11px;line-height:1.6;color:var(--pc-muted)}
+    .efp .efp-stock-value-alert{font-size:11px;margin-top:7px;color:#b36b13;font-weight:650}
+    .efp .efp-stock-value-icon{flex:0 0 51px;height:51px;border-radius:14px;display:grid;place-items:center;color:var(--pc-blue);background:var(--pc-soft)}
+    .ef-dark .efp .efp-stock-value-alert{color:#e8b56c}
+    @media(max-width:480px){.efp .efp-stock-value{padding:17px}.efp .efp-stock-value-icon{flex-basis:41px;height:41px}.efp .efp-stock-value-number{overflow-wrap:anywhere}}
     .efp .efp-sheet{border:1px solid var(--pc-border);border-radius:13px;background:var(--pc-surface);overflow:visible;box-shadow:0 7px 30px #1c3e7308}
     .efp .efp-filterrow{min-height:69px;display:flex;align-items:center;gap:9px;padding:13px 17px;flex-wrap:wrap;border-bottom:1px solid var(--pc-border)}
     .efp .efp-search{width:min(285px,100%);position:relative}
@@ -755,6 +850,27 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
           </button>
         </div>
       </header>
+      {empresaSd && (
+        <section className="efp-stock-value" aria-label="Valor comercial do estoque">
+          <div className="efp-stock-value-copy">
+            <p className="efp-stock-value-label">Valor comercial do estoque</p>
+            <p className="efp-stock-value-number">{carregandoProdutos ? 'Carregando...' : resumoValorEstoque.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
+            <p className="efp-stock-value-description">
+              Preço de tabela atual × quantidade disponível · {resumoValorEstoque.totalProdutos} {resumoValorEstoque.totalProdutos === 1 ? 'produto ativo com estoque' : 'produtos ativos com estoque'}.
+              <br />Estimativa comercial, não representa custo de fabricação ou lucro.
+            </p>
+            {!carregandoProdutos && resumoValorEstoque.semPreco > 0 && (
+              <p className="efp-stock-value-alert" role="status">
+                Atenção: {resumoValorEstoque.semPreco} {resumoValorEstoque.semPreco === 1 ? 'produto está' : 'produtos estão'} sem preço de tabela positivo. O total pode estar incompleto.
+              </p>
+            )}
+          </div>
+          <span className="efp-stock-value-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5v-9Z"/><path d="m3 7.5 9 4.5 9-4.5M12 12v9"/><path d="M8.5 5.2 17.5 9.8"/></svg>
+          </span>
+        </section>
+      )}
+      {empresaSd && erroArquivamento && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{erroArquivamento}</p>}
       {organizando && <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3" style={{background:'var(--pc-soft)',borderColor:'var(--pc-border)',color:'var(--pc-muted)'}}><span style={{fontSize:12,fontWeight:700}}>Ordenar visualização por:</span><select className="efp-select" value={ordenacao} onChange={e => setOrdenacao(e.target.value)}><option value="original">Ordem atual</option><option value="nome">Nome (A–Z)</option><option value="codigo">Código (A–Z)</option><option value="estoque">Menor estoque</option></select><span style={{fontSize:11}}>A ordenação é apenas visual e não altera o banco.</span></div>}
 
       {mostrarFormulario && (
@@ -1070,17 +1186,22 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z"/></svg>
             Mais filtros
           </button>
+          {empresaSd && <button type="button" className="efp-archive-toggle" aria-pressed={exibirArquivados}
+            onClick={() => { setExibirArquivados((atual) => !atual); setFiltroStatus(''); setSomenteEmProducao(false) }}>
+            {exibirArquivados ? '← Ver produtos' : `Arquivados (${idsArquivados.size})`}
+          </button>}
           <span className="efp-count">{produtosFiltrados.length} {produtosFiltrados.length === 1 ? 'produto' : 'produtos'}</span>
           {mostrarMaisFiltros && <div style={{width:'100%',display:'flex',gap:15,alignItems:'center',paddingTop:6,flexWrap:'wrap'}}>
             <label style={{fontSize:11,color:'var(--pc-muted)',display:'flex',alignItems:'center',gap:7}}><input type="checkbox" checked={somenteEmProducao} onChange={e => setSomenteEmProducao(e.target.checked)}/> Somente em produção</label>
             <button type="button" style={{fontSize:11,color:'var(--pc-blue)',fontWeight:700}} onClick={() => {setBusca('');setFiltroCategoria('');setFiltroStatus('');setSomenteEmProducao(false)}}>Limpar filtros</button>
           </div>}
         </div>
+        {empresaSd && exibirArquivados && <p className="px-5 py-3 text-xs" style={{ color: 'var(--pc-muted)' }}>Produtos arquivados permanecem no histórico dos relatórios. Para recuperar um item, abra o menu ••• e escolha Restaurar produto.</p>}
         <div className="efp-table-wrap">
           <table className="efp-table">
             <thead><tr><th>Produto</th><th>Categoria</th><th>Estoque atual</th><th>Mínimo</th><th>Valor unitário</th><th>Status</th><th aria-label="Ações" /></tr></thead>
             <tbody>
-              {carregandoProdutos ? <tr><td colSpan={7} className="efp-empty">Carregando produtos...</td></tr> : produtosFiltrados.length === 0 ? <tr><td colSpan={7} className="efp-empty">Nenhum produto encontrado.</td></tr> : produtosFiltrados.map(produto =>
+              {(carregandoProdutos || carregandoArquivados) ? <tr><td colSpan={7} className="efp-empty">Carregando produtos...</td></tr> : produtosFiltrados.length === 0 ? <tr><td colSpan={7} className="efp-empty">Nenhum produto encontrado.</td></tr> : produtosFiltrados.map(produto =>
                 <tr key={produto.id}>
                   <td><div className="efp-namecell"><span className="efp-package">{iconePacote}</span><div><div className="efp-productname">{produto.nome}</div><div className="efp-productcode">{produto.codigo}{produto.emProducao ? ' · Em produção' : ''}</div></div></div></td>
                   <td>{produto.categoria}</td>
@@ -1088,18 +1209,18 @@ function Produtos({ produtos, setProdutos, empresaAtiva, carregandoProdutos }) {
                   <td>{numFormat(produto.estoqueMinimo)} un.</td>
                   <td>{empresaSd ? numPreco(produto.valorUnitario) : '—'}</td>
                   <td><StatusProduto produto={produto}/></td>
-                  <td><MenuAcoes produto={produto} menuAbertoProdutoId={menuAbertoProdutoId} onAlternarMenu={alternarMenuProduto} onEditar={abrirEdicao} onAlterarStatus={alterarStatusProduto}/></td>
+                  <td><MenuAcoes produto={produto} menuAbertoProdutoId={menuAbertoProdutoId} onAlternarMenu={alternarMenuProduto} onEditar={abrirEdicao} onAlterarStatus={alterarStatusProduto} onArquivar={definirArquivamento} empresaSd={empresaSd} arquivado={idsArquivados.has(produto.id)} ocupada={operandoArquivoId !== null}/></td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
         <div className="efp-mobile">
-          {carregandoProdutos ? <div className="efp-empty">Carregando produtos...</div> : produtosFiltrados.length === 0 ? <div className="efp-empty">Nenhum produto encontrado.</div> : produtosFiltrados.map(produto =>
+          {(carregandoProdutos || carregandoArquivados) ? <div className="efp-empty">Carregando produtos...</div> : produtosFiltrados.length === 0 ? <div className="efp-empty">Nenhum produto encontrado.</div> : produtosFiltrados.map(produto =>
             <div key={produto.id} className="efp-mobile-card">
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
                 <div className="efp-namecell"><span className="efp-package">{iconePacote}</span><div><div className="efp-productname">{produto.nome}</div><div className="efp-productcode">{produto.codigo}{produto.emProducao ? ' · Em produção' : ''}</div></div></div>
-                <MenuAcoes produto={produto} menuAbertoProdutoId={menuAbertoProdutoId} onAlternarMenu={alternarMenuProduto} onEditar={abrirEdicao} onAlterarStatus={alterarStatusProduto}/>
+                <MenuAcoes produto={produto} menuAbertoProdutoId={menuAbertoProdutoId} onAlternarMenu={alternarMenuProduto} onEditar={abrirEdicao} onAlterarStatus={alterarStatusProduto} onArquivar={definirArquivamento} empresaSd={empresaSd} arquivado={idsArquivados.has(produto.id)} ocupada={operandoArquivoId !== null}/>
               </div>
               <div className="efp-mobile-grid"><div className="efp-mobile-metric"><small>Estoque</small><strong>{numFormat(produto.estoqueAtual)} un.</strong></div><div className="efp-mobile-metric"><small>Mínimo</small><strong>{numFormat(produto.estoqueMinimo)} un.</strong></div><div className="efp-mobile-metric"><small>Valor</small><strong>{empresaSd ? numPreco(produto.valorUnitario) : '—'}</strong></div></div>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,marginTop:13}}><span style={{fontSize:11,color:'var(--pc-muted)'}}>{produto.categoria}</span><StatusProduto produto={produto}/></div>

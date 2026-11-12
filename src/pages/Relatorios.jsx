@@ -150,16 +150,23 @@ function RelatoriosConteudo({ empresaAtiva }) {
   const [vendasDados, setVendasDetalhadas] = useState([])
   const [totalDespesasPeriodo, setTotalDespesasPeriodo] = useState(null)
   const [erroDespesas, setErroDespesas] = useState('')
+  const [outrasReceitas, setOutrasReceitas] = useState(null)
+  const [erroOutrasReceitas, setErroOutrasReceitas] = useState('')
   const [carregandoRelatorio, setCarregandoRelatorio] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
   const consultaAtual = useRef(0)
   const empresaId = empresaAtiva?.id
   const empresaEhDega = empresaAtiva?.nome?.trim().toLowerCase() === 'dega'
+  // Canal principal reúne suas saídas e as dos seus canais secundários.
+  // Os valores salvos nas movimentações não são alterados.
   const canaisVenda = empresaEhDega
     ? [
         { valor: 'dega_moto_parts', nome: 'Dega Moto Parts' },
+        { valor: 'full_dega_moto_parts', nome: 'Full Dega Moto Parts', pai: 'dega_moto_parts' },
         { valor: 'emplajoi', nome: 'Emplajoi' },
+        { valor: 'full_emplajoi', nome: 'Full Emplajoi', pai: 'emplajoi' },
         { valor: 'fecha_molde', nome: 'Fecha Molde' },
+        { valor: 'full_fecha_molde', nome: 'Full da Fecha Molde', pai: 'fecha_molde' },
         { valor: 'shopee', nome: 'Shopee' },
       ]
     : [
@@ -175,6 +182,13 @@ function RelatoriosConteudo({ empresaAtiva }) {
   const carregarRelatorio = useCallback(async () => {
     if (!empresaId) return
     const requisicao = ++consultaAtual.current
+    const filhosCanalSelecionado = empresaEhDega
+      ? ({
+          dega_moto_parts: ['full_dega_moto_parts'],
+          emplajoi: ['full_emplajoi'],
+          fecha_molde: ['full_fecha_molde'],
+        }[canalSelecionado] || [])
+      : []
     if (!dataInicial || !dataFinal) return
 
     if (dataInicial > dataFinal) {
@@ -182,6 +196,8 @@ function RelatoriosConteudo({ empresaAtiva }) {
       setVendasDetalhadas([])
       setTotalDespesasPeriodo(null)
       setErroDespesas('')
+      setOutrasReceitas(null)
+      setErroOutrasReceitas('')
       alert('A data inicial não pode ser maior que a data final.')
       return
     }
@@ -189,6 +205,8 @@ function RelatoriosConteudo({ empresaAtiva }) {
     setCarregandoRelatorio(true)
     setTotalDespesasPeriodo(null)
     setErroDespesas('')
+    setOutrasReceitas(null)
+    setErroOutrasReceitas('')
 
     const { data, error } = await supabase.rpc('relatorio_produtos_por_canal', {
       p_empresa_id: empresaId,
@@ -248,7 +266,9 @@ function RelatoriosConteudo({ empresaAtiva }) {
         .range(inicio, inicio + tamanhoPagina - 1)
 
       if (canalSelecionado && canalSelecionado !== '__sem_canal__') {
-        consulta = consulta.eq('canal_venda', canalSelecionado)
+        consulta = filhosCanalSelecionado.length
+          ? consulta.in('canal_venda', [canalSelecionado, ...filhosCanalSelecionado])
+          : consulta.eq('canal_venda', canalSelecionado)
       }
       // No caso de "Não informado", a filtragem final também cobre strings vazias/espaços.
       const { data: pagina, error: erroPagina } = await consulta
@@ -321,7 +341,40 @@ function RelatoriosConteudo({ empresaAtiva }) {
       }
     }
 
+    // Outras receitas pertencem à empresa inteira no período selecionado.
+    // Filtros de produto, tipo e canal não alteram o total de serviços.
+    // Paginação evita perder receitas acima do limite de resposta do Supabase.
+    let receitasPeriodo = null
+    let erroAoCarregarReceitas = ''
+    if (!empresaEhDega) {
+      try {
+        const receitas = []
+        const paginaTamanho = 800
+        for (let pos = 0; ; pos += paginaTamanho) {
+          if (requisicao !== consultaAtual.current) return
+          const { data: pagina, error: erroPagina } = await supabase
+            .from('outras_receitas')
+            .select('id,descricao,categoria,valor,data_recebimento')
+            .eq('empresa_id', empresaId)
+            .gte('data_recebimento', dataInicial)
+            .lte('data_recebimento', dataFinal)
+            .order('id', { ascending: true })
+            .range(pos, pos + paginaTamanho - 1)
+          if (requisicao !== consultaAtual.current) return
+          if (erroPagina) throw erroPagina
+          receitas.push(...(pagina || []))
+          if (!pagina || pagina.length < paginaTamanho) break
+        }
+        receitasPeriodo = receitas
+      } catch (erro) {
+        console.error('Erro ao carregar outras receitas do relatório:', erro)
+        erroAoCarregarReceitas = 'Não foi possível consultar Outras Receitas. O consolidado financeiro está indisponível.'
+      }
+    }
+
     if (requisicao !== consultaAtual.current) return
+    setOutrasReceitas(receitasPeriodo)
+    setErroOutrasReceitas(erroAoCarregarReceitas)
     setRelatorioPorProduto(relatorioFormatado)
     setVendasDetalhadas(vendasFormatadas)
     setTotalDespesasPeriodo(despesasPeriodo)
@@ -395,7 +448,11 @@ function RelatoriosConteudo({ empresaAtiva }) {
   const valorEstimado = vendasSemPreco.reduce((total, venda) => total + venda.valorTotal, 0)
   const totalValorVendido = valorConfirmado + valorEstimado
   const temEstimativas = vendasSemPreco.length > 0
-  const saldoAposDespesas = totalDespesasPeriodo === null ? null : totalValorVendido - totalDespesasPeriodo
+  const totalOutrasReceitas = outrasReceitas === null ? null
+    : outrasReceitas.reduce((total, receita) => total + Number(receita.valor || 0), 0)
+  const receitaTotal = totalOutrasReceitas === null ? null : totalValorVendido + totalOutrasReceitas
+  const saldoAposDespesas = receitaTotal === null || totalDespesasPeriodo === null
+    ? null : receitaTotal - totalDespesasPeriodo
 
   const valoresPorProduto = vendasDetalhadas.reduce((valores, venda) => {
     const anterior = valores[venda.produtoId] || { confirmado: 0, estimado: 0 }
@@ -446,8 +503,10 @@ function RelatoriosConteudo({ empresaAtiva }) {
 
   const rankingCanaisVenda = Object.values(
     vendasDetalhadas.reduce((ranking, venda) => {
-      const chaveCanal = venda.canalVenda || 'nao_informado'
-      const nomeCanal = formatarCanalVenda(venda.canalVenda)
+      // No consolidado DEGA, cada saída pertence a exatamente um canal principal.
+      const canalFilho = empresaEhDega ? canaisVenda.find(c => c.valor === venda.canalVenda) : null
+      const chaveCanal = canalFilho?.pai || venda.canalVenda || 'nao_informado'
+      const nomeCanal = formatarCanalVenda(chaveCanal)
 
       if (!ranking[chaveCanal]) {
         ranking[chaveCanal] = {
@@ -491,6 +550,17 @@ function RelatoriosConteudo({ empresaAtiva }) {
       ),
     }))
     .sort((a, b) => b.total - a.total)
+
+  // Detalhamento por canal específico: não é somado novamente ao consolidado.
+  const detalhesCanaisDega = empresaEhDega
+    ? Object.values(vendasDetalhadas.reduce((grupos, venda) => {
+        const chave = venda.canalVenda || 'nao_informado'
+        if (!grupos[chave]) grupos[chave] = { chave, nome: formatarCanalVenda(venda.canalVenda), total: 0, movimentacoes: 0 }
+        grupos[chave].total += venda.quantidade
+        grupos[chave].movimentacoes += 1
+        return grupos
+      }, {})).sort((a, b) => b.total - a.total)
+    : []
 
   const formatarQuantidade = (valor) => Number(valor || 0).toLocaleString('pt-BR')
   const totalUnidadesCanais = rankingCanaisVenda.reduce((total, canal) => total + canal.total, 0)
@@ -800,7 +870,68 @@ function RelatoriosConteudo({ empresaAtiva }) {
       })
     }
 
+    if (empresaEhDega && detalhesCanaisDega.length) {
+      adicionarTituloSecao('Detalhamento por canal principal e secundario')
+      detalhesCanaisDega.forEach((canal) => {
+        garantirEspaco(8)
+        pdf.setFont('helvetica', 'normal')
+        pdf.setFontSize(9)
+        pdf.setTextColor(51, 65, 85)
+        const pai = canaisVenda.find(c => c.valor === canal.chave)?.pai
+        pdf.text(`${pai ? '  - ' : ''}${canal.nome}`, margem + 3, y)
+        pdf.text(formatarQuantidade(canal.total), margem + larguraUtil - 3, y, { align: 'right' })
+        y += 7
+      })
+      y += 4
+    }
+
     if (!empresaEhDega) {
+      adicionarTituloSecao('Resumo financeiro do periodo')
+      const linhasFinanceiras = [
+        ['Vendas de produtos (filtros aplicados)', formatarMoeda(totalValorVendido)],
+        ['Outras receitas (toda a empresa)', totalOutrasReceitas === null ? 'Indisponivel' : formatarMoeda(totalOutrasReceitas)],
+        ['Receita total', receitaTotal === null ? 'Indisponivel' : formatarMoeda(receitaTotal)],
+        ['Despesas (toda a empresa)', totalDespesasPeriodo === null ? 'Indisponivel' : formatarMoeda(totalDespesasPeriodo)],
+        ['Saldo apos despesas', saldoAposDespesas === null ? 'Indisponivel' : formatarMoeda(saldoAposDespesas)],
+      ]
+      linhasFinanceiras.forEach(([rotulo, valor]) => {
+        garantirEspaco(9)
+        pdf.setFontSize(9)
+        pdf.setTextColor(71, 85, 105)
+        pdf.setFont('helvetica', 'normal')
+        pdf.text(rotulo, margem, y)
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(15, 23, 42)
+        pdf.text(valor, margem + larguraUtil, y, { align: 'right' })
+        y += 8
+      })
+      y += 6
+      adicionarTituloSecao('Outras receitas do periodo')
+      if (outrasReceitas === null) {
+        garantirEspaco(8)
+        pdf.setFontSize(9)
+        pdf.text('Consulta indisponivel', margem, y)
+        y += 9
+      } else if (outrasReceitas.length === 0) {
+        garantirEspaco(8)
+        pdf.setFontSize(9)
+        pdf.text('Nenhuma outra receita no periodo.', margem, y)
+        y += 9
+      } else {
+        outrasReceitas.forEach((receita) => {
+          const descricao = pdf.splitTextToSize(`${formatarDataBrasil(receita.data_recebimento)} - ${receita.descricao} (${receita.categoria})`, larguraUtil - 45)
+          const altura = Math.max(8, descricao.length * 4.5 + 3)
+          garantirEspaco(altura)
+          pdf.setFont('helvetica', 'normal')
+          pdf.setFontSize(8.5)
+          pdf.setTextColor(51, 65, 85)
+          pdf.text(descricao, margem, y)
+          pdf.setFont('helvetica', 'bold')
+          pdf.text(formatarMoeda(receita.valor), margem + larguraUtil, y, { align: 'right' })
+          y += altura
+        })
+      }
+      y += 5
       garantirEspaco(22)
       pdf.setFont('helvetica', 'normal')
       pdf.setFontSize(9)
@@ -852,12 +983,14 @@ function RelatoriosConteudo({ empresaAtiva }) {
         titulo: 'Saldo após despesas',
         valor: saldoAposDespesas === null ? '—' : formatarMoeda(saldoAposDespesas),
         detalhe: saldoAposDespesas === null
-          ? 'Despesas indisponíveis'
-          : `Vendas − ${formatarMoeda(totalDespesasPeriodo)} em despesas; sem custos de produção`,
+          ? 'Receitas ou despesas indisponíveis'
+          : `Receita total − ${formatarMoeda(totalDespesasPeriodo)} em despesas; sem custos de produção`,
         icone: 'saldo',
         cor: 'text-emerald-600 bg-emerald-50',
       },
-      { titulo: temEstimativas ? 'Valor faturado' : 'Valor histórico das saídas', valor: formatarMoeda(totalValorVendido), detalhe: temEstimativas ? `${vendasSemPreco.length} saída(s) estimada(s) • ${vendasComPreco.length} com preço real` : 'preços registrados nas saídas', icone: 'financeiro', cor: 'text-violet-600 bg-violet-50' },
+      { titulo: temEstimativas ? 'Vendas (com estimativas)' : 'Vendas de produtos', valor: formatarMoeda(totalValorVendido), detalhe: temEstimativas ? `${vendasSemPreco.length} saída(s) estimada(s) • ${vendasComPreco.length} com preço real` : 'Preços registrados nas saídas', icone: 'financeiro', cor: 'text-violet-600 bg-violet-50' },
+      { titulo: 'Outras receitas', valor: totalOutrasReceitas === null ? '—' : formatarMoeda(totalOutrasReceitas), detalhe: 'Serviços e terceirizações · mesmo período', icone: 'financeiro', cor: 'text-cyan-700 bg-cyan-50' },
+      { titulo: 'Receita total', valor: receitaTotal === null ? '—' : formatarMoeda(receitaTotal), detalhe: 'Vendas selecionadas + outras receitas da empresa', icone: 'financeiro', cor: 'text-blue-700 bg-blue-50' },
     ] : [
       { titulo: 'Produtos com estoque baixo', valor: formatarQuantidade(produtosComEstoqueBaixo.length), detalhe: 'dos produtos encontrados', icone: 'alerta', cor: 'text-amber-600 bg-amber-50' },
     ]),
@@ -867,6 +1000,7 @@ function RelatoriosConteudo({ empresaAtiva }) {
     <section className="efr-report min-w-0 bg-transparent pb-8">
       <style>{ESTILOS_GRAFICOS}</style>
       {erroDespesas && <p role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{erroDespesas}</p>}
+      {erroOutrasReceitas && <p role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{erroOutrasReceitas}</p>}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.24em] text-blue-600">Análise e inteligência</p>
@@ -923,7 +1057,7 @@ function RelatoriosConteudo({ empresaAtiva }) {
             <label className="mb-1.5 block text-xs font-semibold text-slate-600" htmlFor="canal-relatorio">Canal de venda</label>
             <select id="canal-relatorio" value={canalSelecionado} onChange={(event) => setCanalSelecionado(event.target.value)} className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
               <option value="">Todos os canais</option>
-              {canaisVenda.map((canal) => <option key={canal.valor} value={canal.valor}>{canal.nome}</option>)}
+              {canaisVenda.map((canal) => <option key={canal.valor} value={canal.valor}>{canal.pai ? '↳ ' : ''}{canal.nome}</option>)}
               <option value="__sem_canal__">Não informado</option>
             </select>
           </div>
@@ -1044,7 +1178,7 @@ function RelatoriosConteudo({ empresaAtiva }) {
 
         <div className="min-w-0 h-full rounded-2xl border border-slate-100 bg-white p-4 shadow-sm print:break-inside-avoid sm:p-5">
           <h3 className="text-xl font-bold text-slate-900">Distribuição por canal</h3>
-          <p className="mt-1 text-sm text-slate-500">Participação nas saídas por canal de venda.</p>
+          <p className="mt-1 text-sm text-slate-500">{empresaEhDega ? 'Saídas agrupadas pelo canal principal, incluindo os secundários.' : 'Participação nas saídas por canal de venda.'}</p>
           {carregandoRelatorio ? (
             <p className="mt-6 rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">Carregando canais...</p>
           ) : totalUnidadesCanais > 0 ? (
@@ -1058,7 +1192,26 @@ function RelatoriosConteudo({ empresaAtiva }) {
         </div>
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+         {!empresaEhDega && (
+           <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+             <div className="border-b border-slate-100 px-5 py-4">
+               <h3 className="text-lg font-bold text-slate-900">Outras receitas do período</h3>
+               <p className="mt-1 text-xs text-slate-500">Serviços e terceirizações da SD Plásticos. Considera as datas, independentemente do filtro de produto, canal ou tipo.</p>
+             </div>
+             <div className="overflow-x-auto">
+               <table className="w-full min-w-[550px] text-left text-sm">
+                 <thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr><th className="px-5 py-3">Recebimento</th><th className="px-5 py-3">Descrição</th><th className="px-5 py-3">Categoria</th><th className="px-5 py-3 text-right">Valor</th></tr></thead>
+                 <tbody>
+                   {outrasReceitas?.map(receita => <tr key={receita.id} className="border-t border-slate-100"><td className="whitespace-nowrap px-5 py-3">{formatarDataBrasil(receita.data_recebimento)}</td><td className="px-5 py-3 font-medium">{receita.descricao}</td><td className="px-5 py-3">{receita.categoria}</td><td className="whitespace-nowrap px-5 py-3 text-right font-bold">{formatarMoeda(receita.valor)}</td></tr>)}
+                   {(!outrasReceitas || outrasReceitas.length === 0) && <tr><td colSpan={4} className="px-5 py-8 text-center text-slate-500">{outrasReceitas === null ? 'Dados indisponíveis ou carregando...' : 'Nenhuma outra receita neste período.'}</td></tr>}
+                 </tbody>
+               </table>
+             </div>
+             <div className="border-t border-slate-100 bg-slate-50 px-5 py-4 text-right text-sm font-bold">Total: {totalOutrasReceitas === null ? '—' : formatarMoeda(totalOutrasReceitas)}</div>
+           </div>
+         )}
+
+         <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
           <div className="flex flex-col gap-1 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6">
             <div>
               <h3 className="text-xl font-bold text-slate-900">Detalhamento por canal</h3>
@@ -1110,6 +1263,22 @@ function RelatoriosConteudo({ empresaAtiva }) {
               )}
             </table>
           </div>
+          {empresaEhDega && detalhesCanaisDega.length > 0 && (
+            <div className="border-t border-slate-100 px-5 py-4 sm:px-6">
+              <h4 className="text-sm font-bold text-slate-800">Detalhamento dos canais secundários</h4>
+              <p className="mt-1 text-xs text-slate-500">Os valores abaixo já estão incluídos nos totais dos canais principais acima.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {detalhesCanaisDega.map(canal => {
+                  const pai = canaisVenda.find(c => c.valor === canal.chave)?.pai
+                  return <div key={canal.chave} className="rounded-xl border border-slate-200 px-3 py-3 text-sm">
+                    <div className="font-semibold text-slate-800">{pai ? '↳ ' : ''}{canal.nome}</div>
+                    {pai && <div className="mt-0.5 text-[11px] text-slate-400">Principal: {formatarCanalVenda(pai)}</div>}
+                    <div className="mt-2 font-bold text-blue-700">{formatarQuantidade(canal.total)} un. <span className="text-xs font-normal text-slate-500">· {formatarQuantidade(canal.movimentacoes)} movimentações</span></div>
+                  </div>
+                })}
+              </div>
+            </div>
+          )}
           {!empresaEhDega && (
             <div className="border-t border-slate-100 px-6 py-3 text-xs text-slate-500 space-y-1">
               <p><strong className="text-slate-700">Valores com preço histórico:</strong> {formatarMoeda(valorConfirmado)} ({vendasComPreco.length} saídas).</p>
